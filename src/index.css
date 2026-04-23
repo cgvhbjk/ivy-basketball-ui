@@ -1,0 +1,125 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---- Dual Range Slider Custom Styles ---- */
+.dual-range-container {
+  position: relative;
+  height: 36px;
+  display: flex;
+  align-items: center;
+}
+
+.dual-range-container input[type="range"] {
+  position: absolute;
+  width: 100%;
+  height: 4px;
+  background: transparent;
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+  outline: none;
+}
+
+.dual-range-container input[type="range"]::-webkit-slider-thumb {
+  pointer-events: all;
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #6366f1;
+  border: 2px solid #e8e8f0;
+  cursor: pointer;
+  position: relative;
+  z-index: 1;
+  transition: background 0.15s, transform 0.15s;
+}
+
+.dual-range-container input[type="range"]::-webkit-slider-thumb:hover {
+  background: #818cf8;
+  transform: scale(1.15);
+}
+
+.dual-range-container input[type="range"]::-moz-range-thumb {
+  pointer-events: all;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #6366f1;
+  border: 2px solid #e8e8f0;
+  cursor: pointer;
+}
+
+.dual-range-track {
+  position: absolute;
+  height: 4px;
+  border-radius: 2px;
+  background: #2a2a3e;
+  width: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.dual-range-fill {
+  position: absolute;
+  height: 4px;
+  border-radius: 2px;
+  background: #6366f1;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* ---- Scrollbar styling ---- */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #14141e;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2a2a3e;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3a3a5e;
+}
+
+/* ---- Base body ---- */
+body {
+  margin: 0;
+  background: #0d0d14;
+  color: #e8e8f0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* ---- Tree visualization ---- */
+.tree-node {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.tree-branch {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 16px;
+}
+
+.tree-branch::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 1px;
+  height: 16px;
+  background: #2a2a3e;
+  transform: translateX(-50%);
+}
