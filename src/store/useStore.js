@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
 const useStore = create((set) => ({
-  // ---- Comparison Lab ----
+  // ---- Comparison Lab (hidden, preserved for future reuse) ----
   teamA: 'yale',
   teamB: 'princeton',
   yearRange: [2022, 2025],
@@ -15,13 +15,16 @@ const useStore = create((set) => ({
   setLabView: (v) => set({ labView: v }),
 
   // ---- Matchup Analyzer ----
+  // Each team can now use an independent year for cross-year comparisons
   analyzerTeamA: 'yale',
   analyzerTeamB: 'princeton',
-  analyzerYear: 2025,
+  analyzerYearA: 2025,
+  analyzerYearB: 2025,
 
   setAnalyzerTeamA: (v) => set({ analyzerTeamA: v }),
   setAnalyzerTeamB: (v) => set({ analyzerTeamB: v }),
-  setAnalyzerYear: (v) => set({ analyzerYear: v }),
+  setAnalyzerYearA: (v) => set({ analyzerYearA: v }),
+  setAnalyzerYearB: (v) => set({ analyzerYearB: v }),
 }))
 
 export default useStore

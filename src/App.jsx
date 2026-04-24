@@ -1,5 +1,6 @@
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import Navbar from './components/Navbar.jsx'
+// ComparisonLab preserved at /comparison — removed from nav, kept for future reuse
 import ComparisonLab from './pages/ComparisonLab.jsx'
 import MatchupAnalyzer from './pages/MatchupAnalyzer.jsx'
 import InsightsLab from './pages/InsightsLab.jsx'
@@ -10,10 +11,11 @@ export default function App() {
     <div className="min-h-screen" style={{ background: '#0d0d14' }}>
       <Navbar />
       <Routes>
-        <Route path="/"          element={<ComparisonLab />} />
-        <Route path="/analyzer"  element={<MatchupAnalyzer />} />
-        <Route path="/insights"  element={<InsightsLab />} />
-        <Route path="/players"   element={<PlayerLab />} />
+        <Route path="/"           element={<Navigate to="/analyzer" replace />} />
+        <Route path="/comparison" element={<ComparisonLab />} />
+        <Route path="/analyzer"   element={<MatchupAnalyzer />} />
+        <Route path="/insights"   element={<InsightsLab />} />
+        <Route path="/players"    element={<PlayerLab />} />
       </Routes>
     </div>
   )

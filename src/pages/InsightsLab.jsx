@@ -6,14 +6,18 @@ import {
 } from 'recharts'
 import teamSeasons from '../data/teamSeasons.json'
 import players from '../data/players.json'
-import { SCHOOL_META, SCHOOL_COLORS, TEAM_METRICS, PLAYER_METRICS } from '../data/constants.js'
+import { SCHOOLS, SCHOOL_META, SCHOOL_COLORS, YEARS, TEAM_METRICS } from '../data/constants.js'
 import useInsightStore from '../store/useInsightStore.js'
+import GlossaryTooltip from '../components/shared/GlossaryTooltip.jsx'
 import {
   computeRelationship, scoreInsight, timeWindowComparison,
   detectThreshold, generateInsightText, linearRegression, detectStyleInteractions,
-  schemeBreakdown, buildRosterAggregates, computeBiodataRelationship,
-  computePlayerRelationship, parseHeightIn, classYearNum,
+  schemeBreakdown, computeBiodataRelationship,
+  buildRosterAggregatesWeighted, buildPhysicalMatchupPairs, pearsonCorrelation,
+  classifySchemeFromRoster, computeTeamArchetype, ARCHETYPES,
+  computeArchetypeMatchupMatrix, computePositionPhysicalImpact,
 } from '../utils/insightEngine.js'
+import games from '../data/games.json'
 
 const SEL = { background: '#13131f', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '6px 10px', fontSize: 13 }
 const BTN = (active, color = '#4f46e5') => ({
@@ -21,14 +25,12 @@ const BTN = (active, color = '#4f46e5') => ({
   cursor: 'pointer', border: 'none',
   background: active ? color : '#1e1e2e', color: active ? '#fff' : '#9ca3af',
 })
+const CARD = { background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 12, padding: '16px 20px' }
 
 function ConfidencePill({ confidence }) {
   const colors = { HIGH: '#10b981', MEDIUM: '#f59e0b', LOW: '#ef4444' }
   return (
-    <span style={{
-      background: colors[confidence] + '22', color: colors[confidence],
-      borderRadius: 4, padding: '2px 8px', fontSize: 11, fontWeight: 600,
-    }}>
+    <span style={{ background: colors[confidence] + '22', color: colors[confidence], borderRadius: 4, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>
       {confidence}
     </span>
   )
@@ -43,25 +45,26 @@ function CustomDot({ cx, cy, payload }) {
   return (
     <circle cx={cx} cy={cy} r={5}
       fill={payload?.fill ?? '#6366f1'} fillOpacity={0.85}
-      stroke="#0d0d14" strokeWidth={1}
-    />
+      stroke="#0d0d14" strokeWidth={1} />
   )
 }
 
-// ── Correlation Tab ───────────────────────────────────────────────────────────
+// ── Correlation Tab ────────────────────────────────────────────────────────────
+
+const METRIC_GROUPS_LIST = [...new Set(TEAM_METRICS.map(m => m.group))]
 
 function CorrelationPanel() {
-  const { xVar, yVar, yearRange, savedInsights,
-    setXVar, setYVar, saveInsight, removeInsight } = useInsightStore()
-  const [styleKey, setStyleKey] = useState('three_rate_o')
+  const { xVar, yVar, yearRange, savedInsights, setXVar, setYVar, saveInsight, removeInsight } = useInsightStore()
+  const [styleKey, setStyleKey]   = useState('three_rate_o')
+  const [searchTerm, setSearchTerm] = useState('')
 
   const { points, correlation, n } = useMemo(() =>
     computeRelationship(teamSeasons, xVar, yVar, { yearRange })
   , [xVar, yVar, yearRange])
 
   const { valid, confidence, reason } = useMemo(() => scoreInsight(correlation, n), [correlation, n])
-  const threshold = useMemo(() => detectThreshold(teamSeasons, xVar, yVar, yearRange), [xVar, yVar, yearRange])
-  const windows   = useMemo(() => timeWindowComparison(teamSeasons, xVar, yVar), [xVar, yVar])
+  const threshold       = useMemo(() => detectThreshold(teamSeasons, xVar, yVar, yearRange), [xVar, yVar, yearRange])
+  const windows         = useMemo(() => timeWindowComparison(teamSeasons, xVar, yVar), [xVar, yVar])
   const styleInteractions = useMemo(() => detectStyleInteractions(teamSeasons, xVar, yVar, styleKey), [xVar, yVar, styleKey])
 
   const xMeta = TEAM_METRICS.find(m => m.key === xVar)
@@ -86,6 +89,15 @@ function CorrelationPanel() {
     ]
   }, [points])
 
+  const filteredGroups = useMemo(() => {
+    const q = searchTerm.toLowerCase()
+    return METRIC_GROUPS_LIST.map(group => ({
+      group,
+      metrics: TEAM_METRICS.filter(m => m.group === group &&
+        (q === '' || m.label.toLowerCase().includes(q) || m.key.includes(q)))
+    })).filter(g => g.metrics.length > 0)
+  }, [searchTerm])
+
   function handleSave() {
     saveInsight({
       id: `${xVar}_${yVar}`,
@@ -100,22 +112,51 @@ function CorrelationPanel() {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 28 }}>
       <div>
-        <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 12, color: '#6b7280' }}>X →</span>
-            <select style={SEL} value={xVar} onChange={e => setXVar(e.target.value)}>
-              {TEAM_METRICS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
-            </select>
+        {/* Metric selector with search */}
+        <div style={{ ...CARD, marginBottom: 20 }}>
+          <div style={{ display: 'flex', gap: 12, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 12, color: '#6b7280' }}>X →</span>
+              <select style={SEL} value={xVar} onChange={e => setXVar(e.target.value)}>
+                {TEAM_METRICS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+              </select>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 12, color: '#6b7280' }}>Y ↑</span>
+              <select style={SEL} value={yVar} onChange={e => setYVar(e.target.value)}>
+                {TEAM_METRICS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+              </select>
+            </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 12, color: '#6b7280' }}>Y ↑</span>
-            <select style={SEL} value={yVar} onChange={e => setYVar(e.target.value)}>
-              {TEAM_METRICS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
-            </select>
+
+          {/* Searchable metric browser */}
+          <div style={{ borderTop: '1px solid #1e1e2e', paddingTop: 12 }}>
+            <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>Browse metrics</div>
+            <input
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              placeholder="Filter metrics..."
+              style={{ ...SEL, width: 200, marginBottom: 10 }}
+            />
+            {filteredGroups.map(({ group, metrics }) => (
+              <div key={group} style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 10, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>{group}</div>
+                <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                  {metrics.map(m => (
+                    <GlossaryTooltip key={m.key} metricKey={m.key}>
+                      <button style={{ ...BTN(xVar === m.key || yVar === m.key, xVar === m.key ? '#6366f1' : '#059669'), fontSize: 11, padding: '3px 9px' }}
+                        onClick={() => xVar === m.key ? setYVar(m.key) : setXVar(m.key)}>
+                        {m.label}
+                      </button>
+                    </GlossaryTooltip>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 
-        <div style={{ background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 12, padding: '20px 16px' }}>
+        <div style={CARD}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
             <span style={{ fontSize: 18, fontWeight: 700, color: '#e2e8f0' }}>r = {correlation.toFixed(3)}</span>
             <ConfidencePill confidence={confidence} />
@@ -165,7 +206,7 @@ function CorrelationPanel() {
           </div>
         </div>
 
-        <div style={{ marginTop: 20, background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 12, padding: '16px 20px' }}>
+        <div style={{ ...CARD, marginTop: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: '#a5b4fc' }}>Style Interaction</div>
             <div style={{ display: 'flex', gap: 6 }}>
@@ -187,7 +228,7 @@ function CorrelationPanel() {
           </div>
         </div>
 
-        <div style={{ marginTop: 16, background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 12, padding: '16px 20px' }}>
+        <div style={{ ...CARD, marginTop: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: '#a5b4fc', marginBottom: 12 }}>Stability Over Time</div>
           <div style={{ display: 'flex', gap: 16 }}>
             {windows.map(w => (
@@ -261,17 +302,16 @@ const DEF_METRICS = [
 ]
 
 const OFF_DESCRIPTIONS = {
-  'Run & Gun':        'Fast pace, 3-heavy — Cornell/Dartmouth style',
-  'Transition Attack':'Fast pace, attacks rim off push — Cornell 2024',
-  'Spread Offense':   'Deliberate + perimeter-heavy — Princeton style',
-  'Grind It Out':     'Slow, inside-focused — Yale defensive model',
+  'Run & Gun':         'Fast pace + 3-heavy: Cornell/Dartmouth style',
+  'Transition Attack': 'Fast pace, attacks rim off push — Cornell 2024',
+  'Spread Offense':    'Deliberate + perimeter-heavy — Princeton style',
+  'Grind It Out':      'Slow, inside-focused — Yale/Harvard defensive model',
 }
-
 const DEF_DESCRIPTIONS = {
-  'High Pressure':   'Forces turnovers (tov_d ≥ 31)',
-  'Rim Protection':  'Blocks shots (blk_d ≥ 11)',
-  'Coverage':        'Limits eFG% (efg_d ≤ 50)',
-  'Standard':        'Balanced defensive approach',
+  'High Pressure':  'Forces turnovers (tov_d ≥ 31)',
+  'Rim Protection': 'Blocks shots (blk_d ≥ 11)',
+  'Coverage':       'Limits eFG% (efg_d ≤ 50)',
+  'Standard':       'Balanced defensive approach',
 }
 
 function SchemeHalf({ title, schemeType, metrics, defaultMetric, colors, descriptions }) {
@@ -285,7 +325,6 @@ function SchemeHalf({ title, schemeType, metrics, defaultMetric, colors, descrip
       <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 16 }}>
         {schemeType === 'off' ? 'Classified by tempo × 3-point rate' : 'Classified by turnover forcing, rim protection, eFG% limiting'}
       </div>
-
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
         {data.map((s, i) => (
           <div key={s.scheme} style={{ background: '#0f0f1a', border: `1px solid ${colors[i]}33`, borderRadius: 8, padding: '10px 12px' }}>
@@ -298,22 +337,18 @@ function SchemeHalf({ title, schemeType, metrics, defaultMetric, colors, descrip
                 </div>
                 <div style={{ fontSize: 10, color: '#6b7280' }}>avg win%</div>
               </div>
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 12, color: '#4b5563' }}>n={s.n}</div>
-              </div>
+              <div style={{ textAlign: 'right' }}><div style={{ fontSize: 12, color: '#4b5563' }}>n={s.n}</div></div>
             </div>
           </div>
         ))}
       </div>
-
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
         <span style={{ fontSize: 12, color: '#6b7280' }}>Compare:</span>
         <select style={SEL} value={metric} onChange={e => setMetric(e.target.value)}>
           {metrics.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
         </select>
       </div>
-
-      <div style={{ background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 10, padding: '14px 12px' }}>
+      <div style={CARD}>
         <ResponsiveContainer width="100%" height={200}>
           <BarChart data={data} margin={{ top: 4, right: 8, bottom: 52, left: 8 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1e1e2e" />
@@ -333,19 +368,106 @@ function SchemeHalf({ title, schemeType, metrics, defaultMetric, colors, descrip
   )
 }
 
+function SchemeClassifierPanel() {
+  const [school, setSchool] = useState('yale')
+  const [year,   setYear]   = useState(2025)
+
+  const season = useMemo(() =>
+    teamSeasons.find(s => s.school === school && s.year === year)
+  , [school, year])
+
+  const squad = useMemo(() =>
+    players.filter(p => p.school === school && p.year === year)
+  , [school, year])
+
+  const rosterScheme = useMemo(() =>
+    classifySchemeFromRoster(season, squad)
+  , [season, squad])
+
+  const archetype = useMemo(() =>
+    computeTeamArchetype(squad, season)
+  , [squad, season])
+
+  const color = SCHOOL_COLORS[school]
+
+  return (
+    <div style={{ ...CARD, marginBottom: 28 }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: '#a5b4fc', marginBottom: 4 }}>
+        Roster-Based Scheme Classifier
+      </div>
+      <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 16 }}>
+        Predicts offensive and defensive scheme from playing-time distribution, position mix, and physical profile — without using game film.
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap' }}>
+        <select style={SEL} value={school} onChange={e => setSchool(e.target.value)}>
+          {SCHOOLS.map(s => <option key={s} value={s}>{SCHOOL_META[s].fullName}</option>)}
+        </select>
+        <select style={SEL} value={year} onChange={e => setYear(+e.target.value)}>
+          {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+        </select>
+        <span style={{ fontSize: 12, color: '#4b5563' }}>
+          Archetype: <span style={{ color, fontWeight: 600 }}>{archetype.archetype}</span>
+          <span style={{ color: '#374151', marginLeft: 8 }}>{archetype.signals[0]}</span>
+        </span>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        {/* Offensive */}
+        <div style={{ background: '#13131f', borderRadius: 10, padding: '16px 18px', borderLeft: '3px solid #f59e0b' }}>
+          <div style={{ fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Predicted Offense</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: '#f59e0b', marginBottom: 12 }}>{rosterScheme.offScheme}</div>
+          {rosterScheme.offSignals.map((s, i) => (
+            <div key={i} style={{ fontSize: 12, color: '#9ca3af', marginBottom: 4 }}>▸ {s}</div>
+          ))}
+          {season && (
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #1e1e2e' }}>
+              <div style={{ fontSize: 10, color: '#4b5563', textTransform: 'uppercase', marginBottom: 6 }}>Efficacy</div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                {[['AdjOE', season.adjoe?.toFixed(1)], ['Win%', (season.win_pct * 100).toFixed(1) + '%'], ['eFG%', season.efg_o?.toFixed(1) + '%']].map(([lbl, val]) => (
+                  <div key={lbl} style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: '#e2e8f0' }}>{val}</div>
+                    <div style={{ fontSize: 10, color: '#4b5563' }}>{lbl}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Defensive */}
+        <div style={{ background: '#13131f', borderRadius: 10, padding: '16px 18px', borderLeft: '3px solid #6366f1' }}>
+          <div style={{ fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Predicted Defense</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: '#6366f1', marginBottom: 12 }}>{rosterScheme.defScheme}</div>
+          {rosterScheme.defSignals.map((s, i) => (
+            <div key={i} style={{ fontSize: 12, color: '#9ca3af', marginBottom: 4 }}>▸ {s}</div>
+          ))}
+          {season && (
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #1e1e2e' }}>
+              <div style={{ fontSize: 10, color: '#4b5563', textTransform: 'uppercase', marginBottom: 6 }}>Efficacy</div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                {[['AdjDE', season.adjde?.toFixed(1)], ['eFG%Alw', season.efg_d?.toFixed(1) + '%'], ['TOV Frc', season.tov_d?.toFixed(1) + '%']].map(([lbl, val]) => (
+                  <div key={lbl} style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: '#e2e8f0' }}>{val}</div>
+                    <div style={{ fontSize: 10, color: '#4b5563' }}>{lbl}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function SchemePanel() {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32 }}>
-      <SchemeHalf
-        title="Offensive Schemes" schemeType="off"
-        metrics={OFF_METRICS} defaultMetric="win_pct"
-        colors={OFF_COLORS} descriptions={OFF_DESCRIPTIONS}
-      />
-      <SchemeHalf
-        title="Defensive Schemes" schemeType="def"
-        metrics={DEF_METRICS} defaultMetric="adjde"
-        colors={DEF_COLORS} descriptions={DEF_DESCRIPTIONS}
-      />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
+      <SchemeClassifierPanel />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32 }}>
+        <SchemeHalf title="Offensive Schemes" schemeType="off" metrics={OFF_METRICS} defaultMetric="win_pct" colors={OFF_COLORS} descriptions={OFF_DESCRIPTIONS} />
+        <SchemeHalf title="Defensive Schemes" schemeType="def" metrics={DEF_METRICS} defaultMetric="adjde"   colors={DEF_COLORS} descriptions={DEF_DESCRIPTIONS} />
+      </div>
     </div>
   )
 }
@@ -354,30 +476,22 @@ function SchemePanel() {
 
 const BIODATA_TEAM_METRICS = [
   { key: 'avg_height_in',  label: 'Avg Roster Height (in)' },
+  { key: 'avg_weight_lbs', label: 'Avg Roster Weight (lbs)' },
   { key: 'avg_experience', label: 'Avg Experience (yr)' },
   { key: 'pct_guards',     label: '% Guards' },
   { key: 'pct_forwards',   label: '% Forwards' },
   { key: 'pct_bigs',       label: '% Bigs/Centers' },
 ]
 
-const PLAYER_BIO_KEYS = [
-  { key: 'height_in',    label: 'Height (in)' },
-  { key: 'class_yr_num', label: 'Experience (class yr)' },
-]
-
-const rosterAggs = buildRosterAggregates(players)
-
-const enrichedPlayers = players.map(p => ({
-  ...p,
-  height_in:    parseHeightIn(p.height),
-  class_yr_num: classYearNum(p.class_yr),
-}))
+const rosterAggsWeighted       = buildRosterAggregatesWeighted(players)
+const archetypeMatchupData     = computeArchetypeMatchupMatrix(teamSeasons, players, games)
+const positionPhysicalImpact   = computePositionPhysicalImpact(games, players)
 
 function ScatterBlock({ points, regressionLine, correlation, n, confidence, xLabel, yLabel, tooltipExtra }) {
   const coloredPoints = points.map(p => ({ ...p, fill: SCHOOL_COLORS[p.school] ?? '#6366f1' }))
   const { valid, reason } = scoreInsight(correlation, n)
   return (
-    <div style={{ background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 12, padding: '16px' }}>
+    <div style={CARD}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
         <span style={{ fontSize: 16, fontWeight: 700, color: '#e2e8f0' }}>r = {correlation.toFixed(3)}</span>
         <ConfidencePill confidence={confidence} />
@@ -419,17 +533,18 @@ function ScatterBlock({ points, regressionLine, correlation, n, confidence, xLab
   )
 }
 
-const TBL_HDR = { padding: '7px 10px', fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #1e1e2e', background: '#0a0a14' }
+const TBL_HDR  = { padding: '7px 10px', fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #1e1e2e', background: '#0a0a14' }
 const TBL_CELL = { padding: '7px 10px', fontSize: 12, borderBottom: '1px solid #13131f' }
 
-function BioPanel() {
+// ── Roster & Bio Panel ────────────────────────────────────────────────────────
+
+function RosterBioPanel() {
   const [biodataKey, setBiodataKey] = useState('avg_height_in')
   const [outcomeKey, setOutcomeKey] = useState('win_pct')
-  const [playerXKey, setPlayerXKey] = useState('height_in')
-  const [playerYKey, setPlayerYKey] = useState('bpm')
+  const [physYear,   setPhysYear]   = useState(2025)
 
   const teamBio = useMemo(() =>
-    computeBiodataRelationship(rosterAggs, teamSeasons, biodataKey, outcomeKey)
+    computeBiodataRelationship(rosterAggsWeighted, teamSeasons, biodataKey, outcomeKey)
   , [biodataKey, outcomeKey])
 
   const { confidence: teamConf } = useMemo(() => scoreInsight(teamBio.correlation, teamBio.n), [teamBio])
@@ -446,74 +561,71 @@ function BioPanel() {
     ]
   }, [teamBio])
 
-  const teamRanked = useMemo(() =>
-    [...teamBio.points].sort((a, b) => b.x - a.x)
-  , [teamBio])
-
-  const playerBio = useMemo(() =>
-    computePlayerRelationship(enrichedPlayers, playerXKey, playerYKey)
-  , [playerXKey, playerYKey])
-
-  const { confidence: playerConf } = useMemo(() => scoreInsight(playerBio.correlation, playerBio.n), [playerBio])
-
-  const playerRegLine = useMemo(() => {
-    if (playerBio.points.length < 3) return []
-    const { slope, intercept } = linearRegression(playerBio.points)
-    const xs = playerBio.points.map(p => p.x)
-    const xMin = Math.min(...xs), xMax = Math.max(...xs)
-    const pad = (xMax - xMin) * 0.05
-    return [
-      { x: xMin - pad, y: slope * (xMin - pad) + intercept },
-      { x: xMax + pad, y: slope * (xMax + pad) + intercept },
-    ]
-  }, [playerBio])
-
-  const playerRanked = useMemo(() =>
-    [...playerBio.points].sort((a, b) => b.x - a.x).slice(0, 30)
-  , [playerBio])
+  const teamRanked = useMemo(() => [...teamBio.points].sort((a, b) => b.x - a.x), [teamBio])
 
   const xBioMeta = BIODATA_TEAM_METRICS.find(m => m.key === biodataKey)
   const yOutMeta = TEAM_METRICS.find(m => m.key === outcomeKey)
-  const xPlyMeta = PLAYER_BIO_KEYS.find(m => m.key === playerXKey)
-  const yPlyMeta = PLAYER_METRICS.find(m => m.key === playerYKey)
+
+  const physPairs  = useMemo(() => {
+    const aggsAll = buildRosterAggregatesWeighted(players)
+    return buildPhysicalMatchupPairs(
+      teamSeasons.filter(s => s.year === physYear),
+      aggsAll.filter(a => a.year === physYear)
+    )
+  }, [physYear])
+  const physR = useMemo(() => {
+    const valid = physPairs.filter(p => p.heightDiff != null)
+    return valid.length >= 4 ? pearsonCorrelation(valid.map(p => p.heightDiff), valid.map(p => p.winPctDiff)) : null
+  }, [physPairs])
+  const physPoints = useMemo(() =>
+    physPairs.filter(p => p.heightDiff != null).map(p => ({
+      x: p.heightDiff, y: p.winPctDiff,
+      label: `${SCHOOL_META[p.schoolA]?.abbr} vs ${SCHOOL_META[p.schoolB]?.abbr}`, fill: '#6366f1',
+    }))
+  , [physPairs])
+  const physRegLine = useMemo(() => {
+    if (physPoints.length < 3) return []
+    const { slope, intercept } = linearRegression(physPoints)
+    const xs = physPoints.map(p => p.x)
+    const xMin = Math.min(...xs), xMax = Math.max(...xs)
+    const pad = (xMax - xMin) * 0.05
+    return [{ x: xMin-pad, y: slope*(xMin-pad)+intercept }, { x: xMax+pad, y: slope*(xMax+pad)+intercept }]
+  }, [physPoints])
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 36 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 44 }}>
 
-      {/* ── Team Roster → Outcomes ── */}
+      {/* ── Roster Composition → Team Outcomes ── */}
       <div>
-        <div style={{ fontSize: 15, fontWeight: 700, color: '#a5b4fc', marginBottom: 2 }}>Roster Composition → Team Outcomes</div>
+        <div style={{ fontSize: 16, fontWeight: 700, color: '#a5b4fc', marginBottom: 2 }}>Roster Composition → Team Outcomes</div>
         <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 16 }}>
-          Aggregated roster biodata (min 6 mpg) correlated with season outcomes
+          Playing-time weighted roster biodata (min 6 mpg) correlated with season outcomes · all years 2022–2025
         </div>
         <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 12, color: '#6b7280' }}>Roster metric →</span>
-            <select style={SEL} value={biodataKey} onChange={e => setBiodataKey(e.target.value)}>
-              {BIODATA_TEAM_METRICS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
-            </select>
+            <GlossaryTooltip metricKey={biodataKey}>
+              <select style={SEL} value={biodataKey} onChange={e => setBiodataKey(e.target.value)}>
+                {BIODATA_TEAM_METRICS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+              </select>
+            </GlossaryTooltip>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 12, color: '#6b7280' }}>Outcome ↑</span>
-            <select style={SEL} value={outcomeKey} onChange={e => setOutcomeKey(e.target.value)}>
-              {TEAM_METRICS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
-            </select>
+            <GlossaryTooltip metricKey={outcomeKey}>
+              <select style={SEL} value={outcomeKey} onChange={e => setOutcomeKey(e.target.value)}>
+                {TEAM_METRICS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+              </select>
+            </GlossaryTooltip>
           </div>
         </div>
-
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 20 }}>
           <ScatterBlock
-            points={teamBio.points}
-            regressionLine={teamRegLine}
-            correlation={teamBio.correlation}
-            n={teamBio.n}
-            confidence={teamConf}
-            xLabel={xBioMeta?.label ?? biodataKey}
-            yLabel={yOutMeta?.label ?? outcomeKey}
-            tooltipExtra={d => null}
+            points={teamBio.points} regressionLine={teamRegLine}
+            correlation={teamBio.correlation} n={teamBio.n} confidence={teamConf}
+            xLabel={xBioMeta?.label ?? biodataKey} yLabel={yOutMeta?.label ?? outcomeKey}
+            tooltipExtra={() => null}
           />
-
-          {/* Ranked table */}
           <div style={{ background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 12, overflow: 'hidden', alignSelf: 'start' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 64px 64px' }}>
               <div style={TBL_HDR}>Team / Year</div>
@@ -525,15 +637,9 @@ function BioPanel() {
               const yFmt = yOutMeta?.fmt ? yOutMeta.fmt(d.y) : d.y?.toFixed(2)
               return (
                 <div key={`${d.school}${d.year}`} style={{ display: 'grid', gridTemplateColumns: '1fr 64px 64px' }}>
-                  <div style={{ ...TBL_CELL, color }}>
-                    {SCHOOL_META[d.school]?.abbr} <span style={{ color: '#4b5563', fontSize: 11 }}>{d.year}</span>
-                  </div>
-                  <div style={{ ...TBL_CELL, color: '#e2e8f0', textAlign: 'right', fontWeight: 600 }}>
-                    {d.x?.toFixed(1)}
-                  </div>
-                  <div style={{ ...TBL_CELL, color: '#9ca3af', textAlign: 'right' }}>
-                    {yFmt}
-                  </div>
+                  <div style={{ ...TBL_CELL, color }}>{SCHOOL_META[d.school]?.abbr} <span style={{ color: '#4b5563', fontSize: 11 }}>{d.year}</span></div>
+                  <div style={{ ...TBL_CELL, color: '#e2e8f0', textAlign: 'right', fontWeight: 600 }}>{d.x?.toFixed(1)}</div>
+                  <div style={{ ...TBL_CELL, color: '#9ca3af', textAlign: 'right' }}>{yFmt}</div>
                 </div>
               )
             })}
@@ -541,73 +647,187 @@ function BioPanel() {
         </div>
       </div>
 
-      {/* ── Player Biodata → Performance ── */}
+      {/* ── Section 3: Physical Advantage Analysis ── */}
       <div>
-        <div style={{ fontSize: 15, fontWeight: 700, color: '#a5b4fc', marginBottom: 2 }}>Player Biodata → Individual Performance</div>
+        <div style={{ fontSize: 16, fontWeight: 700, color: '#a5b4fc', marginBottom: 2 }}>Height Advantage vs Win % Advantage</div>
         <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 16 }}>
-          Physical/demographic attributes vs per-game stats (min 10 mpg, all years)
+          Each point = one cross-school pairing in the same season. Answers: does the taller roster win more often?
         </div>
-        <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 12, color: '#6b7280' }}>Bio →</span>
-            <select style={SEL} value={playerXKey} onChange={e => setPlayerXKey(e.target.value)}>
-              {PLAYER_BIO_KEYS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
-            </select>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 12, color: '#6b7280' }}>Stat ↑</span>
-            <select style={SEL} value={playerYKey} onChange={e => setPlayerYKey(e.target.value)}>
-              {PLAYER_METRICS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
-            </select>
-          </div>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16 }}>
+          <span style={{ fontSize: 12, color: '#6b7280' }}>Season:</span>
+          <select style={SEL} value={physYear} onChange={e => setPhysYear(+e.target.value)}>
+            {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+          {physR != null && (
+            <span style={{ fontSize: 13, color: '#9ca3af' }}>
+              r = <span style={{ fontWeight: 700, color: Math.abs(physR) >= 0.35 ? '#10b981' : '#6b7280' }}>{physR.toFixed(3)}</span>
+              <span style={{ color: '#4b5563', marginLeft: 6 }}>n={physPoints.length} pairings</span>
+            </span>
+          )}
         </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 20 }}>
-          <ScatterBlock
-            points={playerBio.points}
-            regressionLine={playerRegLine}
-            correlation={playerBio.correlation}
-            n={playerBio.n}
-            confidence={playerConf}
-            xLabel={xPlyMeta?.label ?? playerXKey}
-            yLabel={yPlyMeta?.label ?? playerYKey}
-            tooltipExtra={d => (
-              <div style={{ fontSize: 11, color: '#6b7280' }}>{d.pos_type}</div>
-            )}
-          />
-
-          {/* Top-30 ranked table */}
-          <div style={{ background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 12, overflow: 'hidden', alignSelf: 'start' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 52px 52px 52px' }}>
-              <div style={TBL_HDR}>Player</div>
-              <div style={{ ...TBL_HDR, textAlign: 'right' }}>Pos</div>
-              <div style={{ ...TBL_HDR, textAlign: 'right' }}>{xPlyMeta?.label?.split(' ')[0] ?? 'Bio'}</div>
-              <div style={{ ...TBL_HDR, textAlign: 'right' }}>{yPlyMeta?.label ?? playerYKey}</div>
-            </div>
-            {playerRanked.map((d, i) => {
-              const color = SCHOOL_COLORS[d.school] ?? '#6b7280'
-              const yFmt = yPlyMeta?.fmt ? yPlyMeta.fmt(d.y) : d.y?.toFixed(1)
-              return (
-                <div key={`${d.name}${d.year}${i}`} style={{ display: 'grid', gridTemplateColumns: '1fr 52px 52px 52px' }}>
-                  <div style={{ ...TBL_CELL, color }}>
-                    <div>{d.name?.split(' ').pop()}</div>
-                    <div style={{ fontSize: 10, color: '#4b5563' }}>{SCHOOL_META[d.school]?.abbr} {d.year}</div>
+        <div style={CARD}>
+          <ResponsiveContainer width="100%" height={280}>
+            <ComposedChart margin={{ top: 8, right: 16, bottom: 28, left: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e1e2e" />
+              <XAxis dataKey="x" type="number" scale="linear" domain={['auto','auto']}
+                tick={{ fill: '#6b7280', fontSize: 11 }}
+                label={{ value: 'Height Diff (in, Team A − Team B)', position: 'insideBottom', offset: -16, fill: '#6b7280', fontSize: 12 }} />
+              <YAxis dataKey="y" type="number" domain={['auto','auto']}
+                tick={{ fill: '#6b7280', fontSize: 11 }} width={54}
+                label={{ value: 'Win % Diff', angle: -90, position: 'insideLeft', offset: 10, fill: '#6b7280', fontSize: 12 }} />
+              <ReferenceLine x={0} stroke="#374151" strokeDasharray="3 3" />
+              <ReferenceLine y={0} stroke="#374151" strokeDasharray="3 3" />
+              <Tooltip content={({ active, payload }) => {
+                if (!active || !payload?.[0]) return null
+                const d = payload[0].payload
+                return (
+                  <div style={{ background: '#13131f', border: '1px solid #1e1e2e', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
+                    <div style={{ color: '#e2e8f0', fontWeight: 600, marginBottom: 4 }}>{d.label}</div>
+                    <div style={{ color: '#9ca3af' }}>Height diff: {d.x > 0 ? '+' : ''}{d.x}"</div>
+                    <div style={{ color: '#9ca3af' }}>Win% diff: {d.y > 0 ? '+' : ''}{(d.y * 100).toFixed(1)}%</div>
                   </div>
-                  <div style={{ ...TBL_CELL, color: '#6b7280', textAlign: 'right', fontSize: 11 }}>
-                    {d.pos_type?.split(' ').pop() ?? '—'}
-                  </div>
-                  <div style={{ ...TBL_CELL, color: '#e2e8f0', textAlign: 'right', fontWeight: 600 }}>
-                    {d.x?.toFixed(1)}
-                  </div>
-                  <div style={{ ...TBL_CELL, color: '#9ca3af', textAlign: 'right' }}>
-                    {yFmt}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
+                )
+              }} />
+              <Scatter data={physPoints} shape={<CustomDot />} isAnimationActive={false} legendType="none" />
+              {physRegLine.length === 2 && (
+                <Line data={physRegLine} dataKey="y" type="linear" dot={false} activeDot={false}
+                  stroke="#6366f1" strokeWidth={2} strokeDasharray="6 3" isAnimationActive={false} legendType="none" />
+              )}
+            </ComposedChart>
+          </ResponsiveContainer>
         </div>
       </div>
+
+      {/* ── Composition Archetype Matchup Matrix ── */}
+      <div>
+        <div style={{ fontSize: 16, fontWeight: 700, color: '#a5b4fc', marginBottom: 2 }}>
+          Composition Archetype Matchups
+        </div>
+        <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 16 }}>
+          Win rate when each archetype faces each other · all Ivy vs Ivy games 2022–2025 · n={archetypeMatchupData.archetypes.length * archetypeMatchupData.archetypes.length} pairings
+        </div>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ borderCollapse: 'collapse', fontSize: 12, minWidth: 520 }}>
+            <thead>
+              <tr>
+                <th style={{ padding: '6px 12px', fontSize: 10, color: '#6b7280', textAlign: 'left', borderBottom: '1px solid #1e1e2e', background: '#0a0a14' }}>
+                  Offense ↓ vs Defense →
+                </th>
+                {archetypeMatchupData.archetypes.map(b => (
+                  <th key={b} style={{ padding: '6px 10px', fontSize: 10, color: '#9ca3af', fontWeight: 600, textAlign: 'center', borderBottom: '1px solid #1e1e2e', background: '#0a0a14', whiteSpace: 'nowrap' }}>
+                    {b}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {archetypeMatchupData.archetypes.map(a => (
+                <tr key={a} style={{ borderBottom: '1px solid #13131f' }}>
+                  <td style={{ padding: '8px 12px', fontWeight: 600, color: '#a5b4fc', whiteSpace: 'nowrap', background: '#0d0d14' }}>{a}</td>
+                  {archetypeMatchupData.archetypes.map(b => {
+                    const cell = archetypeMatchupData.matrix[a][b]
+                    if (!cell) return <td key={b} style={{ padding: '8px 10px', textAlign: 'center', color: '#374151' }}>—</td>
+                    const wr = cell.winRate
+                    const bg = wr >= 60 ? '#10b98122' : wr >= 50 ? '#6366f122' : wr >= 40 ? '#f59e0b22' : '#ef444422'
+                    const fg = wr >= 60 ? '#10b981'  : wr >= 50 ? '#a5b4fc'  : wr >= 40 ? '#f59e0b'  : '#ef4444'
+                    return (
+                      <td key={b} style={{ padding: '8px 10px', textAlign: 'center', background: bg, borderRadius: 4 }}>
+                        <div style={{ fontWeight: 700, color: fg }}>{wr}%</div>
+                        <div style={{ fontSize: 9, color: '#4b5563' }}>{cell.games}g</div>
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ fontSize: 11, color: '#374151', marginTop: 8 }}>
+          Green ≥ 60% win rate · Purple 50–60% · Amber 40–50% · Red &lt; 40%
+        </div>
+      </div>
+
+      {/* ── Position Physical Impact ── */}
+      {positionPhysicalImpact && (
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: '#a5b4fc', marginBottom: 2 }}>
+            Position Physical Advantage → Point Differential
+          </div>
+          <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>
+            OLS regression across {positionPhysicalImpact.n} unique Ivy matchups · R² = {positionPhysicalImpact.r2} (physical attributes explain {(positionPhysicalImpact.r2 * 100).toFixed(0)}% of score differential variance)
+          </div>
+          <div style={{ fontSize: 12, color: '#f59e0b', marginBottom: 16 }}>
+            Coefficients = pts per inch/lb of advantage. Negative sign = that position's height advantage historically correlates with fewer points (Ivy-specific finding).
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+            {/* Height coefficients */}
+            <div style={CARD}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0', marginBottom: 14 }}>Height Advantage (pts/inch)</div>
+              {[
+                { label: 'Guard Height Δ',   coef: positionPhysicalImpact.coefficients.guardHeight, pearson: positionPhysicalImpact.pearson.guardHeight },
+                { label: 'Forward Height Δ', coef: positionPhysicalImpact.coefficients.fwdHeight,   pearson: positionPhysicalImpact.pearson.fwdHeight   },
+                { label: 'Big/C Height Δ',   coef: positionPhysicalImpact.coefficients.bigHeight,   pearson: positionPhysicalImpact.pearson.bigHeight    },
+              ].map(({ label, coef, pearson }) => {
+                const absMax = 2.5
+                const barW = Math.min(Math.abs(coef) / absMax * 100, 100)
+                const barColor = coef >= 0 ? '#10b981' : '#ef4444'
+                return (
+                  <div key={label} style={{ marginBottom: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                      <span style={{ fontSize: 12, color: '#9ca3af' }}>{label}</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: barColor }}>{coef > 0 ? '+' : ''}{coef}</span>
+                    </div>
+                    <div style={{ background: '#1e1e2e', borderRadius: 3, height: 8, position: 'relative', overflow: 'hidden' }}>
+                      <div style={{ position: 'absolute', [coef >= 0 ? 'left' : 'right']: '50%', width: barW / 2 + '%', height: '100%', background: barColor, opacity: 0.7 }} />
+                      <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: '#374151' }} />
+                    </div>
+                    <div style={{ fontSize: 10, color: '#4b5563', marginTop: 2 }}>Pearson r = {pearson > 0 ? '+' : ''}{pearson}</div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Weight coefficients */}
+            <div style={CARD}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0', marginBottom: 14 }}>Weight Advantage (pts/lb)</div>
+              {[
+                { label: 'Guard Weight Δ',   coef: positionPhysicalImpact.coefficients.guardWeight, pearson: positionPhysicalImpact.pearson.guardWeight },
+                { label: 'Forward Weight Δ', coef: positionPhysicalImpact.coefficients.fwdWeight,   pearson: positionPhysicalImpact.pearson.fwdWeight   },
+                { label: 'Big/C Weight Δ',   coef: positionPhysicalImpact.coefficients.bigWeight,   pearson: positionPhysicalImpact.pearson.bigWeight    },
+              ].map(({ label, coef, pearson }) => {
+                const absMax = 0.4
+                const barW = Math.min(Math.abs(coef) / absMax * 100, 100)
+                const barColor = coef >= 0 ? '#10b981' : '#ef4444'
+                return (
+                  <div key={label} style={{ marginBottom: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                      <span style={{ fontSize: 12, color: '#9ca3af' }}>{label}</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: barColor }}>{coef > 0 ? '+' : ''}{coef}</span>
+                    </div>
+                    <div style={{ background: '#1e1e2e', borderRadius: 3, height: 8, position: 'relative', overflow: 'hidden' }}>
+                      <div style={{ position: 'absolute', [coef >= 0 ? 'left' : 'right']: '50%', width: barW / 2 + '%', height: '100%', background: barColor, opacity: 0.7 }} />
+                      <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: '#374151' }} />
+                    </div>
+                    <div style={{ fontSize: 10, color: '#4b5563', marginTop: 2 }}>Pearson r = {pearson > 0 ? '+' : ''}{pearson}</div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div style={{ ...CARD, marginTop: 16, background: '#0d0d14', borderColor: '#f59e0b33' }}>
+            <div style={{ fontSize: 12, color: '#f59e0b', fontWeight: 600, marginBottom: 6 }}>Key Finding</div>
+            <div style={{ fontSize: 12, color: '#9ca3af', lineHeight: 1.7 }}>
+              Physical attributes collectively explain only <strong style={{ color: '#e2e8f0' }}>{(positionPhysicalImpact.r2 * 100).toFixed(0)}%</strong> of point differential variance in Ivy League games —
+              skill, scheme, and execution dominate. Guard weight advantage ({positionPhysicalImpact.pearson.guardWeight > 0 ? '+' : ''}{positionPhysicalImpact.pearson.guardWeight} r) shows the strongest positive individual correlation,
+              while height advantages at all positions are near-zero or slightly negative — contrary to the conventional wisdom that bigger teams win.
+              Center height advantage (r = {positionPhysicalImpact.pearson.bigHeight}) is <em>not</em> stronger than guard height (r = {positionPhysicalImpact.pearson.guardHeight}).
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
@@ -624,11 +844,11 @@ export default function InsightsLab() {
   const [tab, setTab] = useState('correlation')
 
   return (
-    <div style={{ padding: '24px 32px', maxWidth: 1200, margin: '0 auto' }}>
+    <div style={{ padding: '24px 32px', maxWidth: 1240, margin: '0 auto' }}>
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: '#e2e8f0', margin: 0 }}>Insights Lab</h1>
         <p style={{ fontSize: 13, color: '#6b7280', margin: '4px 0 12px' }}>
-          Explore relationships in Ivy League basketball data
+          Explore relationships in Ivy League basketball data · All seasons 2022–2025
         </p>
         <div style={{ display: 'flex', gap: 6 }}>
           {TABS.map(([v, lbl]) => (
@@ -639,7 +859,7 @@ export default function InsightsLab() {
 
       {tab === 'correlation' && <CorrelationPanel />}
       {tab === 'schemes'     && <SchemePanel />}
-      {tab === 'biodata'     && <BioPanel />}
+      {tab === 'biodata'     && <RosterBioPanel />}
     </div>
   )
 }

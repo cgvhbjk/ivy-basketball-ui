@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "fetch-data": "node scripts/fetch-data.mjs"
+    "fetch-data": "node scripts/fetch-data.mjs",
+    "fetch-combine": "node scripts/fetch-combine-data.mjs"
   },
   "dependencies": {
     "react": "^18.2.0",

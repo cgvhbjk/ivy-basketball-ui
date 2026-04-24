@@ -1,18 +1,31 @@
-import { useMemo, useState } from 'react'
-import { RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts'
+import { useMemo, useState, useRef, useEffect } from 'react'
+import {
+  RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer, Tooltip,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid,
+} from 'recharts'
 import players from '../data/players.json'
+import nbaCombine from '../data/nbaCombine.json'
 import { SCHOOLS, SCHOOL_META, SCHOOL_COLORS, YEARS, PLAYER_METRICS } from '../data/constants.js'
 import usePlayerStore from '../store/usePlayerStore.js'
-import { computePowerRatings } from '../utils/powerRating.js'
-import teamSeasons from '../data/teamSeasons.json'
+import GlossaryTooltip from '../components/shared/GlossaryTooltip.jsx'
+import {
+  parseHeightIn, classYearNum, broadPositionGroup,
+  generateTrainingPlan,
+  findNBAComparables, computeNBAHeightPercentile, computeNBACollegeBenchmarks,
+} from '../utils/insightEngine.js'
 
-const SEL = { background: '#13131f', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '6px 10px', fontSize: 13 }
-const BTN = (active, color = '#4f46e5') => ({
+const SEL  = { background: '#13131f', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '6px 10px', fontSize: 13 }
+const BTN  = (active, color = '#4f46e5') => ({
   padding: '5px 11px', borderRadius: 6, fontSize: 12, cursor: 'pointer', border: 'none',
   background: active ? color : '#1e1e2e', color: active ? '#fff' : '#9ca3af',
 })
+const CARD = { background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 12, padding: '20px 24px' }
 
-// Normalize player stat to 0–1 across Ivy pool for that year (min 10 min/g)
+function inchesToFtIn(inches) {
+  if (inches == null) return '—'
+  return `${Math.floor(inches / 12)}'${Math.round(inches % 12)}"`
+}
+
 function buildNorms(allPlayers, year) {
   const pool = allPlayers.filter(p => p.year === year && p.min_pg >= 10)
   const DIMS = ['pts', 'treb', 'ast', 'efg', 'drtg', 'stl']
@@ -31,16 +44,15 @@ function norm(v, min, max, higherBetter) {
 }
 
 const RADAR_DIMS = [
-  { key: 'pts',  label: 'Scoring',    higherBetter: true },
-  { key: 'treb', label: 'Rebounds',   higherBetter: true },
-  { key: 'ast',  label: 'Playmaking', higherBetter: true },
-  { key: 'efg',  label: 'Shooting',   higherBetter: true },
+  { key: 'pts',  label: 'Scoring',    higherBetter: true  },
+  { key: 'treb', label: 'Rebounds',   higherBetter: true  },
+  { key: 'ast',  label: 'Playmaking', higherBetter: true  },
+  { key: 'efg',  label: 'Shooting',   higherBetter: true  },
   { key: 'drtg', label: 'Defense',    higherBetter: false },
-  { key: 'stl',  label: 'Steals',     higherBetter: true },
+  { key: 'stl',  label: 'Steals',     higherBetter: true  },
 ]
 
-// Position-group statistics: average key metrics per position type in a given year
-function positionBreakdown(allPlayers, year) {
+function positionBreakdownWeighted(allPlayers, year) {
   const pool = allPlayers.filter(p => p.year === year && p.min_pg >= 8 && p.pos_type)
   const groups = {}
   for (const p of pool) {
@@ -48,30 +60,152 @@ function positionBreakdown(allPlayers, year) {
     if (!groups[g]) groups[g] = []
     groups[g].push(p)
   }
+
+  function wAvg(ps, key) {
+    const valid = ps.filter(p => p[key] != null && p.min_pg > 0)
+    if (!valid.length) return 0
+    const total = valid.reduce((s, p) => s + p.min_pg, 0)
+    return valid.reduce((s, p) => s + p[key] * p.min_pg, 0) / total
+  }
+
   return Object.entries(groups)
     .map(([pos, ps]) => ({
-      pos,
-      n: ps.length,
-      pts:  +(ps.reduce((s, p) => s + (p.pts  ?? 0), 0) / ps.length).toFixed(1),
-      ortg: +(ps.reduce((s, p) => s + (p.ortg ?? 0), 0) / ps.length).toFixed(1),
-      efg:  +(ps.reduce((s, p) => s + (p.efg  ?? 0), 0) / ps.length).toFixed(1),
-      bpm:  +(ps.reduce((s, p) => s + (p.bpm  ?? 0), 0) / ps.length).toFixed(2),
+      pos, n: ps.length,
+      pts:  +wAvg(ps, 'pts').toFixed(1),
+      ortg: +wAvg(ps, 'ortg').toFixed(1),
+      efg:  +wAvg(ps, 'efg').toFixed(1),
+      bpm:  +wAvg(ps, 'bpm').toFixed(2),
     }))
     .filter(g => g.n >= 2)
     .sort((a, b) => b.ortg - a.ortg)
 }
 
-// Power ratings computed once from the full dataset
-const { ratings: allRatings, coefficients, avgOrtg, avgDrtg, r2 } =
-  computePowerRatings(teamSeasons, players)
+const PRIORITY_COLORS = { High: '#ef4444', Medium: '#f59e0b', Maintenance: '#10b981' }
 
-const prMap = new Map(allRatings.map(r => [`${r.name}||${r.year}`, r]))
+function SearchableSelect({ options, value, onChange, placeholder = 'Select…', style = {} }) {
+  const [open,   setOpen]   = useState(false)
+  const [query,  setQuery]  = useState('')
+  const wrapRef = useRef(null)
+
+  const filtered = useMemo(() => {
+    const q = query.toLowerCase()
+    return q === '' ? options : options.filter(o => o.label.toLowerCase().includes(q))
+  }, [options, query])
+
+  useEffect(() => {
+    function onClickOutside(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) {
+        setOpen(false)
+        setQuery('')
+      }
+    }
+    document.addEventListener('mousedown', onClickOutside)
+    return () => document.removeEventListener('mousedown', onClickOutside)
+  }, [])
+
+  function select(val) {
+    onChange(val)
+    setOpen(false)
+    setQuery('')
+  }
+
+  const selected = options.find(o => o.value === value)
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative', ...style }}>
+      <div
+        onClick={() => setOpen(o => !o)}
+        style={{
+          ...SEL, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          cursor: 'pointer', userSelect: 'none', gap: 6,
+        }}
+      >
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {selected ? selected.label : placeholder}
+        </span>
+        <span style={{ color: '#6b7280', fontSize: 10, flexShrink: 0 }}>▾</span>
+      </div>
+
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 200,
+          background: '#13131f', border: '1px solid #1e1e2e', borderRadius: 8,
+          boxShadow: '0 8px 24px rgba(0,0,0,.5)', overflow: 'hidden', minWidth: 220,
+        }}>
+          <div style={{ padding: '6px 8px', borderBottom: '1px solid #1e1e2e' }}>
+            <input
+              autoFocus
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              onMouseDown={e => e.stopPropagation()}
+              placeholder="Search players…"
+              style={{ ...SEL, width: '100%', boxSizing: 'border-box', padding: '5px 8px' }}
+            />
+          </div>
+          <div style={{ maxHeight: 220, overflowY: 'auto', padding: '4px 0' }}>
+            {filtered.length === 0 ? (
+              <div style={{ padding: '8px 14px', fontSize: 12, color: '#4b5563' }}>No matches</div>
+            ) : filtered.map(o => (
+              <div
+                key={o.value}
+                onMouseDown={() => select(o.value)}
+                style={{
+                  padding: '7px 14px', fontSize: 13, cursor: 'pointer',
+                  background: o.value === value ? '#1e1e2e' : 'transparent',
+                  color: o.value === value ? '#e2e8f0' : '#9ca3af',
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = '#252840'}
+                onMouseLeave={e => e.currentTarget.style.background = o.value === value ? '#1e1e2e' : 'transparent'}
+              >
+                {o.label}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Typical NBA Draft Combine target ranges by position group (2019–2024 aggregate)
+// Sources: ESPN/NBA.com combine coverage; ranges represent 25th–75th percentile of drafted players
+const NBA_COMBINE_TARGETS = {
+  Guard: [
+    { label: 'Listed Height',    range: "6'1\"–6'5\"",  note: 'Typical drafted guard range' },
+    { label: 'Weight',           range: '180–205 lbs',  note: 'Lean, athletic build expected' },
+    { label: 'Wingspan',         range: "6'4\"–6'8\"",  note: 'Wingspan-to-height ratio critical for perimeter D' },
+    { label: 'Max Vert',         range: '33.0–38.5"',   note: 'Explosion metric scouts track closely' },
+    { label: 'Lane Agility',     range: '10.7–11.3 s',  note: 'Lower = faster lateral quickness' },
+    { label: '¾ Sprint',         range: '3.10–3.30 s',  note: 'Straight-line speed, transition threat' },
+  ],
+  Forward: [
+    { label: 'Listed Height',    range: "6'6\"–6'9\"",  note: 'Typical drafted wing/forward range' },
+    { label: 'Weight',           range: '205–230 lbs',  note: 'Frame strength for physical play' },
+    { label: 'Wingspan',         range: "6'9\"–7'1\"",  note: 'Long wingspan enables switch-everything defense' },
+    { label: 'Max Vert',         range: '33.5–38.0"',   note: 'Jump required for above-rim play' },
+    { label: 'Lane Agility',     range: '10.9–11.5 s',  note: 'Key for guarding multiple positions' },
+    { label: '¾ Sprint',         range: '3.20–3.40 s',  note: 'Fast break wing speed' },
+  ],
+  Big: [
+    { label: 'Listed Height',    range: "6'9\"–7'1\"",  note: 'Typical drafted big/center range' },
+    { label: 'Weight',           range: '225–260 lbs',  note: 'Mass for interior positioning' },
+    { label: 'Wingspan',         range: "7'0\"–7'5\"",  note: 'Wingspan is primary rim protection predictor' },
+    { label: 'Max Vert',         range: '30.5–36.0"',   note: 'Explosiveness off two feet for blocks/boards' },
+    { label: 'Lane Agility',     range: '11.3–12.0 s',  note: 'Foot speed for drop coverage and hedges' },
+    { label: '¾ Sprint',         range: '3.30–3.50 s',  note: 'Transition defense from 5 position' },
+  ],
+}
 
 export default function PlayerLab() {
-  const { selectedSchool, selectedYear, selectedPlayer, compareSchool, compareYear,
-    setSelectedSchool, setSelectedYear, setSelectedPlayer, setCompareSchool, setCompareYear } = usePlayerStore()
+  const {
+    selectedSchool, selectedYear, selectedPlayer, compareSchool, compareYear,
+    setSelectedSchool, setSelectedYear, setSelectedPlayer, setCompareSchool, setCompareYear,
+  } = usePlayerStore()
 
   const [tab, setTab] = useState('profile')
+
+  const colorA = SCHOOL_COLORS[selectedSchool]
+  const colorB = SCHOOL_COLORS[compareSchool]
 
   const schoolPlayers = useMemo(() =>
     players.filter(p => p.school === selectedSchool && p.year === selectedYear)
@@ -89,11 +223,6 @@ export default function PlayerLab() {
     schoolPlayers.find(p => p.name === selectedPlayer) ?? schoolPlayers[0]
   , [schoolPlayers, selectedPlayer])
 
-  const playerRating = player ? prMap.get(`${player.name}||${player.year}`) : null
-
-  const colorA = SCHOOL_COLORS[selectedSchool]
-  const colorB = SCHOOL_COLORS[compareSchool]
-
   const radarData = useMemo(() => {
     if (!player) return []
     return RADAR_DIMS.map(dim => {
@@ -102,27 +231,49 @@ export default function PlayerLab() {
     })
   }, [player, norms])
 
-  const posBiodata = useMemo(() => positionBreakdown(players, selectedYear), [selectedYear])
+  const posBiodata = useMemo(() => positionBreakdownWeighted(players, selectedYear), [selectedYear])
 
-  // Ivy-wide leaderboard for the selected year
-  const leaderboard = useMemo(() =>
-    allRatings
-      .filter(r => r.year === selectedYear)
-      .sort((a, b) => b.power_rating - a.power_rating)
-      .slice(0, 20)
-  , [selectedYear])
+  // S&C training plan — based on position and combine targets only, not in-game stats
+  const trainingPlan = useMemo(() => generateTrainingPlan(player), [player])
+
+  // NBA prospect comparisons
+  const nbaComparables = useMemo(() =>
+    player ? findNBAComparables(player, nbaCombine, { maxHeightDiff: 2, n: 5 }) : []
+  , [player])
+
+  const heightIn = useMemo(() => parseHeightIn(player?.height), [player])
+
+  const nbaHeightPctile = useMemo(() => {
+    const pos = broadPositionGroup(player?.pos_type)
+    return (heightIn && pos) ? computeNBAHeightPercentile(heightIn, pos, nbaCombine) : null
+  }, [heightIn, player])
+
+  const nbaBenchmarks = useMemo(() => {
+    const pos = broadPositionGroup(player?.pos_type)
+    return pos ? computeNBACollegeBenchmarks(pos, nbaCombine) : null
+  }, [player])
+
+  function handleSchoolChange(school) {
+    setSelectedSchool(school)
+  }
+
+  function handleYearChange(year) {
+    setSelectedYear(+year)
+  }
 
   const fmtStat = (v, key) => {
     const m = PLAYER_METRICS.find(pm => pm.key === key)
     return v != null ? (m?.fmt ? m.fmt(v) : v.toFixed(1)) : '—'
   }
 
-  function statRow(label, key, p, extra) {
+  function statRow(label, key, p) {
     const v = p?.[key]
     return (
       <div key={key} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #1e1e2e' }}>
-        <span style={{ fontSize: 12, color: '#6b7280' }}>{label}</span>
-        <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{v != null ? fmtStat(v, key) : '—'}{extra}</span>
+        <GlossaryTooltip metricKey={key}>
+          <span style={{ fontSize: 12, color: '#6b7280' }}>{label}</span>
+        </GlossaryTooltip>
+        <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{v != null ? fmtStat(v, key) : '—'}</span>
       </div>
     )
   }
@@ -132,48 +283,43 @@ export default function PlayerLab() {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 700, color: '#e2e8f0', margin: 0 }}>Player Lab</h1>
-          <p style={{ fontSize: 13, color: '#6b7280', margin: '4px 0 0' }}>
-            Individual player stats · Ivy League Basketball
-            {coefficients && (
-              <span style={{ color: '#4b5563' }}> · Power rating R²={r2}</span>
-            )}
-          </p>
+          <p style={{ fontSize: 13, color: '#6b7280', margin: '4px 0 0' }}>Individual player analysis · Ivy League Basketball · All seasons 2022–2025</p>
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
-          {[['profile','Profile'],['leaderboard','Power Rank'],['positions','Positions']].map(([v, lbl]) => (
+          {[['profile','Profile'], ['positions','Positions'], ['training','Training Plan']].map(([v, lbl]) => (
             <button key={v} style={BTN(tab === v)} onClick={() => setTab(v)}>{lbl}</button>
           ))}
         </div>
       </div>
 
+      {/* ── Profile Tab ── */}
       {tab === 'profile' && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
           {/* Left — player selector + profile */}
           <div>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-              <select style={SEL} value={selectedSchool} onChange={e => setSelectedSchool(e.target.value)}>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+              <select style={SEL} value={selectedSchool} onChange={e => handleSchoolChange(e.target.value)}>
                 {SCHOOLS.map(s => <option key={s} value={s}>{SCHOOL_META[s].fullName}</option>)}
               </select>
-              <select style={SEL} value={selectedYear} onChange={e => setSelectedYear(+e.target.value)}>
+              <select style={SEL} value={selectedYear} onChange={e => handleYearChange(e.target.value)}>
                 {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
               </select>
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 16 }}>
-              {schoolPlayers.map(p => (
-                <button key={p.name} style={BTN(player?.name === p.name, colorA)} onClick={() => setSelectedPlayer(p.name)}>
-                  {p.name.split(' ').pop()}
-                </button>
-              ))}
+              <SearchableSelect
+                options={schoolPlayers.map(p => ({ value: p.name, label: p.name }))}
+                value={player?.name ?? ''}
+                onChange={setSelectedPlayer}
+                style={{ flex: 1, minWidth: 160 }}
+              />
             </div>
 
             {player && (
-              <div style={{ background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 12, padding: '20px 24px' }}>
-                {/* Header */}
+              <div style={CARD}>
+                {/* Player header */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, borderBottom: '1px solid #1e1e2e', paddingBottom: 16 }}>
                   <div>
                     <div style={{ fontSize: 20, fontWeight: 700, color: colorA }}>{player.name}</div>
                     <div style={{ fontSize: 13, color: '#9ca3af', marginTop: 3 }}>
-                      {player.pos_type} · {player.class_yr} · {player.height}
+                      {player.pos_type} · {player.class_yr} · {inchesToFtIn(heightIn)}
                     </div>
                     <div style={{ fontSize: 12, color: '#4b5563', marginTop: 2 }}>{player.hometown}</div>
                   </div>
@@ -183,7 +329,22 @@ export default function PlayerLab() {
                   </div>
                 </div>
 
-                {/* Core counting */}
+                {/* Biodata strip */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 18 }}>
+                  {[
+                    ['Height',  heightIn ? inchesToFtIn(heightIn) : player.height ?? '—'],
+                    ['Weight',  player.weight_lbs ? player.weight_lbs + ' lbs' : '—'],
+                    ['Class',   player.class_yr ?? '—'],
+                    ['Exp',     classYearNum(player.class_yr) != null ? classYearNum(player.class_yr) + ' yr' : '—'],
+                  ].map(([lbl, val]) => (
+                    <div key={lbl} style={{ textAlign: 'center', background: '#13131f', borderRadius: 8, padding: '8px' }}>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: '#e2e8f0' }}>{val}</div>
+                      <div style={{ fontSize: 11, color: '#6b7280' }}>{lbl}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Counting stats */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 18 }}>
                   {[['Reb','treb'],['Ast','ast'],['Stl','stl'],['Blk','blk']].map(([lbl, key]) => (
                     <div key={key} style={{ textAlign: 'center', background: '#13131f', borderRadius: 8, padding: '10px 8px' }}>
@@ -193,53 +354,25 @@ export default function PlayerLab() {
                   ))}
                 </div>
 
-                {/* Efficiency */}
+                {/* Efficiency stats with glossary tooltips */}
                 <div style={{ fontSize: 12, fontWeight: 600, color: '#a5b4fc', marginBottom: 8 }}>Efficiency</div>
-                {statRow('Off Rating', 'ortg', player)}
-                {statRow('Def Rating', 'drtg', player)}
-                {statRow('eFG%', 'efg', player)}
+                {statRow('Off Rating',     'ortg',   player)}
+                {statRow('Def Rating',     'drtg',   player)}
+                {statRow('eFG%',           'efg',    player)}
                 {statRow('True Shooting%', 'ts_pct', player)}
-                {statRow('FT%', 'ft_pct', player)}
-                {statRow('Usage%', 'usg', player)}
+                {statRow('FT%',            'ft_pct', player)}
+                {statRow('Usage%',         'usg',    player)}
 
-                {/* Power Rating */}
-                {playerRating && (
-                  <>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#a5b4fc', margin: '14px 0 8px' }}>Power Rating (LS)</div>
-                    <div style={{ background: '#13131f', borderRadius: 8, padding: '14px 16px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                        <span style={{ fontSize: 11, color: '#6b7280' }}>Overall</span>
-                        <span style={{ fontSize: 22, fontWeight: 800, color: playerRating.power_rating >= 0 ? '#10b981' : '#ef4444' }}>
-                          {playerRating.power_rating > 0 ? '+' : ''}{playerRating.power_rating.toFixed(2)}
-                        </span>
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                        <div style={{ fontSize: 12, color: '#6b7280' }}>
-                          Off component
-                          <div style={{ fontSize: 15, fontWeight: 600, color: playerRating.off_component >= 0 ? '#60a5fa' : '#f87171', marginTop: 2 }}>
-                            {playerRating.off_component > 0 ? '+' : ''}{playerRating.off_component.toFixed(2)}
-                          </div>
-                        </div>
-                        <div style={{ fontSize: 12, color: '#6b7280' }}>
-                          Def component
-                          <div style={{ fontSize: 15, fontWeight: 600, color: playerRating.def_component >= 0 ? '#60a5fa' : '#f87171', marginTop: 2 }}>
-                            {playerRating.def_component > 0 ? '+' : ''}{playerRating.def_component.toFixed(2)}
-                          </div>
-                        </div>
-                      </div>
-                      {coefficients && (
-                        <div style={{ fontSize: 10, color: '#374151', marginTop: 10 }}>
-                          β_ortg={coefficients.bOrtg} · β_drtg={coefficients.bDrtg} · weighted by min share
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
+                {/* Advanced stats */}
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#a5b4fc', margin: '14px 0 8px' }}>Advanced</div>
+                {statRow('BPM',       'bpm',     player)}
+                {statRow('Assist%',   'ast_pct', player)}
+                {statRow('Off Reb%',  'or_pct',  player)}
 
                 {/* Radar */}
                 <div style={{ marginTop: 18 }}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: '#a5b4fc', marginBottom: 6 }}>
-                    Profile vs Ivy League {selectedYear}
+                    Profile vs Ivy League {selectedYear} (min 10 mpg)
                   </div>
                   <ResponsiveContainer width="100%" height={190}>
                     <RadarChart data={radarData} margin={{ top: 4, right: 20, bottom: 4, left: 20 }}>
@@ -259,7 +392,7 @@ export default function PlayerLab() {
 
           {/* Right — compare roster table */}
           <div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: '#a5b4fc', marginBottom: 10 }}>Compare Against</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#a5b4fc', marginBottom: 10 }}>Compare Against Roster</div>
             <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
               <select style={SEL} value={compareSchool} onChange={e => setCompareSchool(e.target.value)}>
                 {SCHOOLS.map(s => <option key={s} value={s}>{SCHOOL_META[s].fullName}</option>)}
@@ -270,22 +403,20 @@ export default function PlayerLab() {
             </div>
 
             <div style={{ background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 12, overflow: 'hidden' }}>
-              {/* Table header */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 44px 44px 44px 52px 56px', background: '#0a0a14' }}>
-                {['Player / Pos', 'PTS', 'REB', 'AST', 'eFG%', 'PWR'].map(h => (
+                {['Player / Pos', 'PTS', 'REB', 'AST', 'eFG%', 'BPM'].map(h => (
                   <div key={h} style={{ padding: '9px 10px', fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #1e1e2e' }}>
                     {h}
                   </div>
                 ))}
               </div>
-              {/* Rows */}
               {comparePlayers.filter(p => p.min_pg >= 6).map(p => {
-                const pr = prMap.get(`${p.name}||${p.year}`)
+                const htIn = parseHeightIn(p.height)
                 return (
                   <div key={p.name + p.year} style={{ display: 'grid', gridTemplateColumns: '1fr 44px 44px 44px 52px 56px', borderBottom: '1px solid #0d0d14' }}>
                     <div style={{ padding: '8px 10px', fontSize: 12, color: colorB, fontWeight: 500 }}>
                       <div>{p.name}</div>
-                      <div style={{ fontSize: 10, color: '#4b5563' }}>{p.pos_type} · {p.class_yr} · {p.min_pg?.toFixed(0)}m</div>
+                      <div style={{ fontSize: 10, color: '#4b5563' }}>{p.pos_type} · {p.class_yr} · {htIn ? inchesToFtIn(htIn) : p.height} · {p.min_pg?.toFixed(0)}m</div>
                     </div>
                     {[p.pts, p.treb, p.ast].map((v, i) => (
                       <div key={i} style={{ padding: '8px 10px', fontSize: 13, color: '#e2e8f0', textAlign: 'right', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
@@ -295,8 +426,9 @@ export default function PlayerLab() {
                     <div style={{ padding: '8px 10px', fontSize: 13, color: '#e2e8f0', textAlign: 'right', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
                       {p.efg?.toFixed(1) ?? '—'}
                     </div>
-                    <div style={{ padding: '8px 10px', fontSize: 13, textAlign: 'right', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', color: pr && pr.power_rating >= 0 ? '#10b981' : '#ef4444' }}>
-                      {pr ? (pr.power_rating > 0 ? '+' : '') + pr.power_rating.toFixed(1) : '—'}
+                    <div style={{ padding: '8px 10px', fontSize: 13, textAlign: 'right', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+                      color: p.bpm != null ? (p.bpm >= 0 ? '#10b981' : '#ef4444') : '#4b5563' }}>
+                      {p.bpm != null ? (p.bpm > 0 ? '+' : '') + p.bpm.toFixed(1) : '—'}
                     </div>
                   </div>
                 )
@@ -306,68 +438,27 @@ export default function PlayerLab() {
         </div>
       )}
 
-      {tab === 'leaderboard' && (
-        <div style={{ maxWidth: 680 }}>
-          <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 16 }}>
-            Ivy League power rankings · {selectedYear} · based on lineup-adjusted ORTG/DRTG via least-squares
-          </div>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-            <select style={SEL} value={selectedYear} onChange={e => setSelectedYear(+e.target.value)}>
-              {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
-            </select>
-          </div>
-          <div style={{ background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 12, overflow: 'hidden' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '32px 1fr 80px 80px 80px', background: '#0a0a14' }}>
-              {['#', 'Player / Team', 'Off', 'Def', 'PWR'].map(h => (
-                <div key={h} style={{ padding: '9px 12px', fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #1e1e2e' }}>{h}</div>
-              ))}
-            </div>
-            {leaderboard.map((r, i) => {
-              const p = players.find(pl => pl.name === r.name && pl.year === r.year)
-              const color = SCHOOL_COLORS[r.school] ?? '#888'
-              return (
-                <div key={r.name + r.year} style={{ display: 'grid', gridTemplateColumns: '32px 1fr 80px 80px 80px', borderBottom: '1px solid #13131f' }}>
-                  <div style={{ padding: '10px 12px', fontSize: 12, color: '#4b5563', display: 'flex', alignItems: 'center' }}>{i + 1}</div>
-                  <div style={{ padding: '10px 12px' }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color }}>{r.name}</div>
-                    <div style={{ fontSize: 11, color: '#4b5563' }}>{SCHOOL_META[r.school]?.abbr} · {p?.pos_type} · {p?.class_yr}</div>
-                  </div>
-                  <div style={{ padding: '10px 12px', fontSize: 13, fontWeight: 600, color: r.off_component >= 0 ? '#60a5fa' : '#f87171', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
-                    {r.off_component > 0 ? '+' : ''}{r.off_component.toFixed(1)}
-                  </div>
-                  <div style={{ padding: '10px 12px', fontSize: 13, fontWeight: 600, color: r.def_component >= 0 ? '#60a5fa' : '#f87171', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
-                    {r.def_component > 0 ? '+' : ''}{r.def_component.toFixed(1)}
-                  </div>
-                  <div style={{ padding: '10px 12px', fontSize: 14, fontWeight: 700, color: r.power_rating >= 0 ? '#10b981' : '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
-                    {r.power_rating > 0 ? '+' : ''}{r.power_rating.toFixed(2)}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
+      {/* ── Positions Tab ── */}
       {tab === 'positions' && (
         <div>
-          <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 16 }}>
-            Average stats by Barttorvik position type · {selectedYear} · min 8 min/g
-          </div>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: 13, color: '#6b7280' }}>Season:</span>
             <select style={SEL} value={selectedYear} onChange={e => setSelectedYear(+e.target.value)}>
               {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
             </select>
+            <span style={{ fontSize: 12, color: '#4b5563', marginLeft: 8 }}>Playing-time weighted averages · min 8 min/g</span>
           </div>
+
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14, marginBottom: 28 }}>
             {posBiodata.map(g => (
               <div key={g.pos} style={{ background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 10, padding: '16px 18px' }}>
                 <div style={{ fontSize: 16, fontWeight: 700, color: '#a5b4fc', marginBottom: 4 }}>{g.pos}</div>
                 <div style={{ fontSize: 11, color: '#4b5563', marginBottom: 12 }}>n={g.n} players</div>
                 {[
-                  ['Pts/G', g.pts],
-                  ['ORTG', g.ortg],
-                  ['eFG%', g.efg + '%'],
-                  ['BPM', g.bpm > 0 ? '+' + g.bpm : g.bpm],
+                  ['Pts/G',  g.pts],
+                  ['ORTG',   g.ortg],
+                  ['eFG%',   g.efg + '%'],
+                  ['BPM',    g.bpm > 0 ? '+' + g.bpm : g.bpm],
                 ].map(([lbl, val]) => (
                   <div key={lbl} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid #1e1e2e' }}>
                     <span style={{ fontSize: 12, color: '#6b7280' }}>{lbl}</span>
@@ -378,7 +469,6 @@ export default function PlayerLab() {
             ))}
           </div>
 
-          {/* ORTG + Pts/G bar chart by position — dual Y-axis */}
           <div style={{ background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 12, padding: '20px 24px' }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: '#a5b4fc', marginBottom: 4 }}>Offensive Rating &amp; Scoring by Position Type</div>
             <div style={{ fontSize: 11, color: '#4b5563', marginBottom: 16 }}>
@@ -390,19 +480,261 @@ export default function PlayerLab() {
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e1e2e" />
                 <XAxis dataKey="pos" tick={{ fill: '#6b7280', fontSize: 10 }} angle={-35} textAnchor="end" interval={0} />
                 <YAxis yAxisId="left"  tick={{ fill: '#6b7280', fontSize: 11 }} domain={['auto', 'auto']} width={48} />
-                <YAxis yAxisId="right" orientation="right" tick={{ fill: '#6b7280', fontSize: 11 }} domain={['auto', 'auto']} width={40} />
+                <YAxis yAxisId="right" orientation="right" tick={{ fill: '#6b7280', fontSize: 11 }} domain={[0, 'auto']} width={40} />
                 <Tooltip
                   contentStyle={{ background: '#13131f', border: '1px solid #1e1e2e', borderRadius: 8, fontSize: 12 }}
                   formatter={(v, name) => [v.toFixed(1), name]}
                 />
-                <Bar yAxisId="left"  dataKey="ortg" name="ORTG"  fill="#6366f1" radius={[4, 4, 0, 0]} />
-                <Bar yAxisId="right" dataKey="pts"  name="Pts/G" fill="#10b981" radius={[4, 4, 0, 0]} />
+                <Bar yAxisId="left"  dataKey="ortg" name="ORTG"  fill="#6366f1" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                <Bar yAxisId="right" dataKey="pts"  name="Pts/G" fill="#10b981" radius={[4, 4, 0, 0]} isAnimationActive={false} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
       )}
+
+      {/* ── Training Plan Tab ── */}
+      {tab === 'training' && (
+        <div>
+          {/* Team · Year · Player all on one row */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+            <select style={SEL} value={selectedSchool} onChange={e => handleSchoolChange(e.target.value)}>
+              {SCHOOLS.map(s => <option key={s} value={s}>{SCHOOL_META[s].fullName}</option>)}
+            </select>
+            <select style={SEL} value={selectedYear} onChange={e => handleYearChange(e.target.value)}>
+              {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+            <SearchableSelect
+              options={schoolPlayers.map(p => ({ value: p.name, label: p.name }))}
+              value={player?.name ?? ''}
+              onChange={setSelectedPlayer}
+              style={{ minWidth: 180 }}
+            />
+          </div>
+
+          {player ? (
+            <div>
+              {/* Player header */}
+              <div style={{ ...CARD, marginBottom: 20 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: colorA }}>{player.name}</div>
+                    <div style={{ fontSize: 13, color: '#9ca3af', marginTop: 2 }}>
+                      {player.pos_type} · {player.class_yr} · {inchesToFtIn(heightIn)}{player.weight_lbs ? ` · ${player.weight_lbs} lbs` : ''} · {player.min_pg?.toFixed(1)} mpg
+                    </div>
+                    <div style={{ fontSize: 12, color: '#4b5563', marginTop: 2 }}>Broad position: {broadPositionGroup(player.pos_type) ?? 'Unknown'}</div>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, minWidth: 240 }}>
+                    {[['Pts/G', player.pts], ['ORTG', player.ortg], ['eFG%', player.efg != null ? player.efg+'%' : '—']].map(([lbl, val]) => (
+                      <div key={lbl} style={{ textAlign: 'center', background: '#13131f', borderRadius: 8, padding: '8px' }}>
+                        <div style={{ fontSize: 16, fontWeight: 700, color: '#e2e8f0' }}>{typeof val === 'number' ? val.toFixed(1) : val}</div>
+                        <div style={{ fontSize: 11, color: '#6b7280' }}>{lbl}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* NBA Combine Targets */}
+              {(() => {
+                const pos = broadPositionGroup(player.pos_type)
+                const targets = NBA_COMBINE_TARGETS[pos]
+                return (
+                  <div style={{ marginBottom: 28 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: '#a5b4fc', marginBottom: 4 }}>
+                      NBA Combine Targets — {pos}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 16 }}>
+                      Ranges represent the 25th–75th percentile of {pos}s measured at the NBA Draft Combine (2019–2024).
+                      These are the physical and athletic benchmarks scouts use to evaluate next-level readiness.
+                    </div>
+
+                    {/* Physical combine targets */}
+                    {targets && (
+                      <div style={{ background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 10, padding: '14px 18px', marginBottom: 14 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', marginBottom: 12 }}>Physical Combine Targets</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+                          {targets.map(t => {
+                            const isHeight = t.label === 'Listed Height'
+                            const isWeight = t.label === 'Weight'
+                            const playerVal = isHeight
+                              ? (heightIn ? inchesToFtIn(heightIn) : null)
+                              : isWeight
+                              ? (player.weight_lbs ? `${player.weight_lbs} lbs` : null)
+                              : null
+                            return (
+                              <div key={t.label} style={{ background: '#13131f', borderRadius: 8, padding: '12px 14px' }}>
+                                <div style={{ fontSize: 10, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>{t.label}</div>
+                                <div style={{ fontSize: 15, fontWeight: 700, color: '#6366f1', marginBottom: 4 }}>{t.range}</div>
+                                {isHeight && playerVal && (
+                                  <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 4 }}>
+                                    You: <span style={{ fontWeight: 600, color: nbaHeightPctile >= 40 ? '#10b981' : '#f59e0b' }}>{playerVal}</span>
+                                    {' '}
+                                    <span style={{ fontSize: 11, color: nbaHeightPctile >= 60 ? '#10b981' : nbaHeightPctile >= 40 ? '#f59e0b' : '#ef4444' }}>
+                                      ({nbaHeightPctile != null ? `${nbaHeightPctile}th pctile` : '—'})
+                                    </span>
+                                  </div>
+                                )}
+                                {isWeight && playerVal && (
+                                  <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 4 }}>
+                                    You: <span style={{ fontWeight: 600, color: '#e2e8f0' }}>{playerVal}</span>
+                                  </div>
+                                )}
+                                {!isHeight && !isWeight && (
+                                  <div style={{ fontSize: 11, color: '#4b5563', marginBottom: 4 }}>Not measured at college level</div>
+                                )}
+                                {(isWeight && !playerVal) && (
+                                  <div style={{ fontSize: 11, color: '#4b5563', marginBottom: 4 }}>No weight on record</div>
+                                )}
+                                <div style={{ fontSize: 10, color: '#374151', lineHeight: 1.5 }}>{t.note}</div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* College efficiency targets — what comparable draftees put up */}
+                    {nbaBenchmarks && (
+                      <div style={{ background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 10, padding: '14px 18px', marginBottom: 14 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', marginBottom: 4 }}>College Production Targets</div>
+                        <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 12 }}>
+                          Average college stats put up by drafted {pos}s with US college experience (n={nbaBenchmarks.n}).
+                          Green = at or above target. These are the numbers scouts expect.
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+                          {[
+                            { lbl: 'PPG',  val: player.pts,    target: nbaBenchmarks.avgPpg, unit: '',  higherBetter: true },
+                            { lbl: 'eFG%', val: player.efg,    target: nbaBenchmarks.avgEfg, unit: '%', higherBetter: true },
+                            { lbl: 'TS%',  val: player.ts_pct, target: nbaBenchmarks.avgTs,  unit: '%', higherBetter: true },
+                            { lbl: 'USG%', val: player.usg,    target: nbaBenchmarks.avgUsg, unit: '%', higherBetter: null },
+                          ].map(({ lbl, val, target, unit, higherBetter }) => {
+                            const gap = (val != null && target != null) ? val - target : null
+                            const atTarget = gap == null ? null : higherBetter === true ? gap >= 0 : higherBetter === false ? gap <= 0 : null
+                            const statColor = atTarget === true ? '#10b981' : atTarget === false ? '#ef4444' : '#e2e8f0'
+                            return (
+                              <div key={lbl} style={{ background: '#13131f', borderRadius: 8, padding: '12px' }}>
+                                <div style={{ fontSize: 10, color: '#4b5563', textTransform: 'uppercase', marginBottom: 6 }}>{lbl}</div>
+                                <div style={{ fontSize: 18, fontWeight: 800, color: statColor }}>
+                                  {val != null ? val.toFixed(1) + unit : '—'}
+                                </div>
+                                {target != null && (
+                                  <div style={{ marginTop: 4 }}>
+                                    <div style={{ fontSize: 11, color: '#6b7280' }}>Target: <span style={{ color: '#6366f1', fontWeight: 600 }}>{target.toFixed(1)}{unit}</span></div>
+                                    {gap != null && (
+                                      <div style={{ fontSize: 11, color: statColor, marginTop: 2 }}>
+                                        {gap >= 0 ? '▲ +' : '▼ '}{gap.toFixed(1)}{unit} {atTarget === true ? '✓' : atTarget === false ? 'gap' : ''}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Comparable draft profiles */}
+                    <div style={{ background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 10, padding: '14px 18px', marginBottom: 14 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', marginBottom: 4 }}>Comparable Draft Profiles</div>
+                      <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 12 }}>
+                        NBA draftees matching this player's position ({pos}) within ±2" height. Use their college numbers as concrete production targets.
+                      </div>
+                      {nbaComparables.length === 0 ? (
+                        <div style={{ fontSize: 12, color: '#4b5563' }}>No matching prospects within ±2" in the 2019–2024 dataset.</div>
+                      ) : (
+                        <>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 56px 52px 52px 52px 52px 60px', gap: 2, marginBottom: 4, padding: '0 8px' }}>
+                            {['Player / Pick', 'Year', 'Ht', 'Wt', 'PPG', 'TS%', 'School'].map(h => (
+                              <div key={h} style={{ fontSize: 9, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{h}</div>
+                            ))}
+                          </div>
+                          {nbaComparables.map(p => (
+                            <div key={p.name + p.draft_year}
+                              style={{ display: 'grid', gridTemplateColumns: '1fr 56px 52px 52px 52px 52px 60px', gap: 2, padding: '8px', borderRadius: 6, background: '#0d0d14', marginBottom: 3 }}>
+                              <div>
+                                <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0' }}>{p.name}</div>
+                                <div style={{ fontSize: 10, color: '#4b5563' }}>{p.round === 1 ? `R1 #${p.draft_pick}` : `R2 #${p.draft_pick}`}</div>
+                              </div>
+                              <div style={{ fontSize: 12, color: '#6b7280', display: 'flex', alignItems: 'center' }}>{p.draft_year}</div>
+                              <div style={{ fontSize: 12, color: '#9ca3af', display: 'flex', alignItems: 'center' }}>{inchesToFtIn(p.height_in)}</div>
+                              <div style={{ fontSize: 12, color: '#9ca3af', display: 'flex', alignItems: 'center' }}>{p.weight_lbs ? p.weight_lbs+'lb' : '—'}</div>
+                              <div style={{ fontSize: 12, display: 'flex', alignItems: 'center',
+                                color: p.college_ppg != null && nbaBenchmarks?.avgPpg != null && p.college_ppg >= nbaBenchmarks.avgPpg ? '#10b981' : '#9ca3af' }}>
+                                {p.college_ppg?.toFixed(1) ?? '—'}
+                              </div>
+                              <div style={{ fontSize: 12, display: 'flex', alignItems: 'center',
+                                color: p.college_ts_pct != null && nbaBenchmarks?.avgTs != null && p.college_ts_pct >= nbaBenchmarks.avgTs ? '#10b981' : '#9ca3af' }}>
+                                {p.college_ts_pct != null ? p.college_ts_pct.toFixed(0)+'%' : '—'}
+                              </div>
+                              <div style={{ fontSize: 11, color: '#4b5563', display: 'flex', alignItems: 'center', overflow: 'hidden' }}>
+                                {p.college ?? 'Overseas'}
+                              </div>
+                            </div>
+                          ))}
+                          <div style={{ fontSize: 10, color: '#374151', marginTop: 8 }}>
+                            College stats from public records · approximate · verify on Basketball Reference
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {/* S&C Training Program */}
+              <div style={{ fontSize: 14, fontWeight: 600, color: '#a5b4fc', marginBottom: 4 }}>
+                Strength &amp; Conditioning Program — {broadPositionGroup(player.pos_type)}
+              </div>
+              <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 16 }}>
+                Position-specific S&C targets derived from NBA Draft Combine benchmarks (2019–2024).
+                Focus on physical development — not in-game statistics.
+              </div>
+              {trainingPlan.length === 0 ? (
+                <div style={{ fontSize: 13, color: '#4b5563' }}>No program available for this position.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  {trainingPlan.map((rec, i) => (
+                    <div key={i} style={{ background: '#0f0f1a', border: `1px solid ${PRIORITY_COLORS[rec.priority] ?? '#1e1e2e'}33`, borderRadius: 10, padding: '18px 20px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: PRIORITY_COLORS[rec.priority] ?? '#9ca3af' }}>{rec.area}</span>
+                        <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 4,
+                          background: (PRIORITY_COLORS[rec.priority] ?? '#6b7280') + '22',
+                          color: PRIORITY_COLORS[rec.priority] ?? '#6b7280' }}>
+                          {rec.phase}
+                        </span>
+                        <span style={{ fontSize: 10, color: '#4b5563' }}>{rec.priority} priority</span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 10 }}>
+                        <div style={{ background: '#13131f', borderRadius: 8, padding: '10px 12px' }}>
+                          <div style={{ fontSize: 10, color: '#4b5563', textTransform: 'uppercase', marginBottom: 5 }}>Combine Target</div>
+                          <div style={{ fontSize: 12, color: '#6366f1', fontWeight: 600, lineHeight: 1.4 }}>{rec.target}</div>
+                        </div>
+                        <div style={{ background: '#13131f', borderRadius: 8, padding: '10px 12px' }}>
+                          <div style={{ fontSize: 10, color: '#4b5563', textTransform: 'uppercase', marginBottom: 5 }}>Frequency</div>
+                          <div style={{ fontSize: 12, color: '#9ca3af', lineHeight: 1.4 }}>{rec.frequency}</div>
+                        </div>
+                      </div>
+                      <div style={{ marginBottom: 10 }}>
+                        <div style={{ fontSize: 10, color: '#4b5563', textTransform: 'uppercase', marginBottom: 5 }}>Protocol</div>
+                        <div style={{ fontSize: 12, color: '#e2e8f0', lineHeight: 1.7, background: '#13131f', borderRadius: 8, padding: '10px 12px' }}>
+                          {rec.protocol}
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 11, color: '#4b5563', lineHeight: 1.6, paddingTop: 8, borderTop: '1px solid #1e1e2e' }}>
+                        {rec.rationale}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ fontSize: 13, color: '#4b5563' }}>Select a player above to view their training plan.</div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
-

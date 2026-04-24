@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 
+// Comparison Lab is intentionally excluded — code preserved at /comparison for future reuse
 const links = [
-  { to: '/',          label: 'Comparison Lab' },
   { to: '/analyzer',  label: 'Matchup Analyzer' },
   { to: '/insights',  label: 'Insights Lab' },
   { to: '/players',   label: 'Player Lab' },
@@ -21,7 +21,6 @@ export default function Navbar() {
           <NavLink
             key={to}
             to={to}
-            end={to === '/'}
             style={({ isActive }) => ({
               padding: '6px 14px', borderRadius: 6, fontSize: 13, fontWeight: 500,
               textDecoration: 'none',
