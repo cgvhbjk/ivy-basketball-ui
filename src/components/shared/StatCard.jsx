@@ -10,8 +10,8 @@ export default function StatCard({ label, valueA, valueB, colorA, colorB, higher
 
   return (
     <div style={{
-      background: '#13131f', borderRadius: 10, padding: '12px 16px',
-      border: '1px solid #1e1e2e', display: 'flex', flexDirection: 'column', gap: 6,
+      background: '#1a1a1a', borderRadius: 10, padding: '12px 16px',
+      border: '1px solid #2c2c2c', display: 'flex', flexDirection: 'column', gap: 6,
     }}>
       <div style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
         {label}

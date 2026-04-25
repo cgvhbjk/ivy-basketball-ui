@@ -6,6 +6,9 @@ import { SCHOOLS, SCHOOL_META, SCHOOL_COLORS, YEARS, TEAM_METRIC_MAP } from '../
 import useStore from '../store/useStore.js'
 import TeamBadge from '../components/shared/TeamBadge.jsx'
 import StatCard from '../components/shared/StatCard.jsx'
+import PageHeader from '../components/shared/PageHeader.jsx'
+import Accordion from '../components/shared/Accordion.jsx'
+import { T } from '../styles/theme.js'
 import { getCoach } from '../data/coachMeta.js'
 import {
   classifyOffScheme, classifyDefScheme,
@@ -16,8 +19,8 @@ import {
 } from '../utils/insightEngine.js'
 import games   from '../data/games.json'
 
-const SEL = { background: '#13131f', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '6px 10px', fontSize: 13 }
-const CARD = { background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 12, padding: '20px 24px' }
+const SEL = { background: '#1a1a1a', border: '1px solid #2c2c2c', color: '#ebebeb', borderRadius: 6, padding: '6px 10px', fontSize: 13 }
+const CARD = { background: '#111111', border: '1px solid #2c2c2c', borderRadius: 12, padding: '20px 24px' }
 const SECTION_TITLE = { fontSize: 13, fontWeight: 600, color: '#a5b4fc', marginBottom: 12 }
 
 function norm(v, min, max) {
@@ -72,22 +75,22 @@ function NotablePlayerCard({ player, teamColor }) {
   const heightIn = parseHeightIn(player.height)
   const role = generatePlayerRoleSummary(player)
   return (
-    <div style={{ background: '#13131f', borderRadius: 8, padding: '12px 14px', border: `1px solid ${teamColor}22` }}>
+    <div style={{ background: '#1a1a1a', borderRadius: 8, padding: '12px 14px', border: `1px solid ${teamColor}22` }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
         <div>
           <div style={{ fontSize: 13, fontWeight: 600, color: teamColor }}>{player.name}</div>
           <div style={{ fontSize: 11, color: '#6b7280' }}>{player.pos_type} · {player.class_yr} · {heightIn ? inchesToFtIn(heightIn) : player.height}</div>
         </div>
         <div style={{ textAlign: 'right' }}>
-          <div style={{ fontSize: 18, fontWeight: 800, color: '#e2e8f0' }}>{player.pts?.toFixed(1)}</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: '#ebebeb' }}>{player.pts?.toFixed(1)}</div>
           <div style={{ fontSize: 10, color: '#4b5563' }}>pts/g</div>
         </div>
       </div>
       <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 8, fontStyle: 'italic' }}>{role}</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4 }}>
         {[['REB', player.treb], ['AST', player.ast], ['eFG', player.efg != null ? player.efg.toFixed(0)+'%' : '—'], ['BPM', player.bpm != null ? (player.bpm > 0 ? '+' : '') + player.bpm.toFixed(1) : '—']].map(([lbl, val]) => (
-          <div key={lbl} style={{ textAlign: 'center', background: '#0d0d14', borderRadius: 4, padding: '4px 0' }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0' }}>{val?.toFixed ? val.toFixed(1) : val}</div>
+          <div key={lbl} style={{ textAlign: 'center', background: '#0e0e0e', borderRadius: 4, padding: '4px 0' }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#ebebeb' }}>{val?.toFixed ? val.toFixed(1) : val}</div>
             <div style={{ fontSize: 9, color: '#4b5563' }}>{lbl}</div>
           </div>
         ))}
@@ -173,81 +176,60 @@ export default function MatchupAnalyzer() {
 
   const crossYear = analyzerYearA !== analyzerYearB
 
+  // Win probability KPI stat for header
+  const winPctStr   = winPctA !== null ? (winPctA * 100).toFixed(0) + '%' : null
+  const netA        = seasonA ? ((seasonA.adjoe - seasonA.adjde) > 0 ? '+' : '') + (seasonA.adjoe - seasonA.adjde).toFixed(1) : null
+  const netB        = seasonB ? ((seasonB.adjoe - seasonB.adjde) > 0 ? '+' : '') + (seasonB.adjoe - seasonB.adjde).toFixed(1) : null
+
   return (
-    <div style={{ padding: '24px 32px', maxWidth: 1240, margin: '0 auto' }}>
-      {/* Header */}
-      <div style={{ marginBottom: 20 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: '#e2e8f0', margin: 0 }}>Matchup Analyzer</h1>
-        <p style={{ fontSize: 13, color: '#6b7280', margin: '4px 0 0' }}>Head-to-head breakdown · Ivy League Basketball</p>
-      </div>
+    <div style={{ background: T.bg, minHeight: '100vh' }}>
+      <PageHeader
+        title={`${metaA.abbr} vs ${metaB.abbr}`}
+        subtitle={`${metaA.fullName} ${analyzerYearA} · ${metaB.fullName} ${analyzerYearB} · Head-to-head breakdown`}
+        stats={winPctA !== null ? [
+          { label: `${metaA.abbr} win probability`, value: winPctStr, color: colorA },
+          { label: `${metaB.abbr} win probability`, value: ((1-winPctA)*100).toFixed(0)+'%', color: colorB },
+          { label: `${metaA.abbr} Net Eff`,          value: netA,    color: netA?.startsWith('+') ? T.green : T.red },
+          { label: `${metaB.abbr} Net Eff`,          value: netB,    color: netB?.startsWith('+') ? T.green : T.red },
+          { label: `${metaA.abbr} Record`,           value: seasonA?.record ?? '—' },
+          { label: `${metaB.abbr} Record`,           value: seasonB?.record ?? '—' },
+        ] : []}
+        controls={
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <TeamBadge school={analyzerTeamA} size="sm" showName={false} />
+              <select style={SEL} value={analyzerTeamA} onChange={e => setAnalyzerTeamA(e.target.value)}>
+                {SCHOOLS.map(s => <option key={s} value={s}>{SCHOOL_META[s].fullName}</option>)}
+              </select>
+              <select style={SEL} value={analyzerYearA} onChange={e => setAnalyzerYearA(+e.target.value)}>
+                {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </div>
+            <span style={{ color: T.textMin, fontSize: 13, fontWeight: 700 }}>vs</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <TeamBadge school={analyzerTeamB} size="sm" showName={false} />
+              <select style={SEL} value={analyzerTeamB} onChange={e => setAnalyzerTeamB(e.target.value)}>
+                {SCHOOLS.map(s => <option key={s} value={s}>{SCHOOL_META[s].fullName}</option>)}
+              </select>
+              <select style={SEL} value={analyzerYearB} onChange={e => setAnalyzerYearB(+e.target.value)}>
+                {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </div>
+            {crossYear && (
+              <span style={{ fontSize: 11, color: T.amber }}>⚠ Cross-year</span>
+            )}
+          </div>
+        }
+      />
 
-      {/* Controls */}
-      <div style={{ background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 10, padding: '16px 20px', marginBottom: 20 }}>
-        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <TeamBadge school={analyzerTeamA} size="sm" showName={false} />
-            <select style={SEL} value={analyzerTeamA} onChange={e => setAnalyzerTeamA(e.target.value)}>
-              {SCHOOLS.map(s => <option key={s} value={s}>{SCHOOL_META[s].fullName}</option>)}
-            </select>
-            <select style={SEL} value={analyzerYearA} onChange={e => setAnalyzerYearA(+e.target.value)}>
-              {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
-            </select>
-          </div>
-          <span style={{ color: '#4b5563', fontWeight: 700 }}>vs</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <TeamBadge school={analyzerTeamB} size="sm" showName={false} />
-            <select style={SEL} value={analyzerTeamB} onChange={e => setAnalyzerTeamB(e.target.value)}>
-              {SCHOOLS.map(s => <option key={s} value={s}>{SCHOOL_META[s].fullName}</option>)}
-            </select>
-            <select style={SEL} value={analyzerYearB} onChange={e => setAnalyzerYearB(+e.target.value)}>
-              {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
-            </select>
-          </div>
-          {crossYear && (
-            <div style={{ padding: '5px 12px', background: '#f59e0b22', border: '1px solid #f59e0b44', borderRadius: 6, fontSize: 12, color: '#f59e0b' }}>
-              ⚠ Cross-year comparison — stats not directly comparable
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Win probability banner */}
-      {winPctA !== null && (
-        <div style={{ ...CARD, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 24 }}>
-          <div style={{ textAlign: 'center', flex: 1 }}>
-            <TeamBadge school={analyzerTeamA} size="lg" />
-            <div style={{ marginTop: 8, fontSize: 32, fontWeight: 800, color: colorA }}>
-              {(winPctA * 100).toFixed(0)}%
-            </div>
-            <div style={{ fontSize: 11, color: '#6b7280' }}>win probability</div>
-            <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 3 }}>
-              Net: {seasonA ? ((seasonA.adjoe - seasonA.adjde) > 0 ? '+' : '') + (seasonA.adjoe - seasonA.adjde).toFixed(1) : '—'}
-            </div>
-            <div style={{ fontSize: 11, color: '#4b5563', marginTop: 2 }}>{seasonA?.record ?? '—'}</div>
-          </div>
-          <div style={{ textAlign: 'center', flex: '0 0 60px' }}>
-            <div style={{ color: '#374151', fontSize: 18, fontWeight: 700 }}>vs</div>
-          </div>
-          <div style={{ textAlign: 'center', flex: 1 }}>
-            <TeamBadge school={analyzerTeamB} size="lg" />
-            <div style={{ marginTop: 8, fontSize: 32, fontWeight: 800, color: colorB }}>
-              {((1 - winPctA) * 100).toFixed(0)}%
-            </div>
-            <div style={{ fontSize: 11, color: '#6b7280' }}>win probability</div>
-            <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 3 }}>
-              Net: {seasonB ? ((seasonB.adjoe - seasonB.adjde) > 0 ? '+' : '') + (seasonB.adjoe - seasonB.adjde).toFixed(1) : '—'}
-            </div>
-            <div style={{ fontSize: 11, color: '#4b5563', marginTop: 2 }}>{seasonB?.record ?? '—'}</div>
-          </div>
-        </div>
-      )}
+      <div style={{ padding: '0 28px 28px', maxWidth: 1280, margin: '0 auto' }}>
 
       {/* Section nav */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 20, flexWrap: 'wrap' }}>
         {[['overview','Overview'], ['physical','Physical Matchup'], ['positions','Position Breakdown'], ['roster','Depth & Roster'], ['insights','Practice Insights']].map(([v, lbl]) => (
           <button key={v} onClick={() => setActiveSection(v)}
             style={{ padding: '6px 14px', borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: 'pointer', border: 'none',
-              background: activeSection === v ? '#4f46e5' : '#1e1e2e',
+              background: activeSection === v ? '#4f46e5' : '#2c2c2c',
               color: activeSection === v ? '#fff' : '#9ca3af' }}>
             {lbl}
           </button>
@@ -264,7 +246,7 @@ export default function MatchupAnalyzer() {
               { school: analyzerTeamB, year: analyzerYearB, coach: coachB, color: colorB, offScheme: schemeOffB, defScheme: schemeDefB, meta: metaB },
             ].map(({ school, year, coach, color, offScheme, defScheme, meta }) => (
               <div key={school} style={{ ...CARD }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, borderBottom: '1px solid #1e1e2e', paddingBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, borderBottom: '1px solid #2c2c2c', paddingBottom: 12 }}>
                   <TeamBadge school={school} size="md" showName={false} />
                   <div>
                     <div style={{ fontSize: 15, fontWeight: 700, color }}>{meta.fullName}</div>
@@ -272,15 +254,15 @@ export default function MatchupAnalyzer() {
                   </div>
                 </div>
                 <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 2 }}>Head Coach</div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0', marginBottom: 10 }}>{coach.name}</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#ebebeb', marginBottom: 10 }}>{coach.name}</div>
                 <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 2 }}>Playstyle</div>
                 <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 12, lineHeight: 1.5 }}>{coach.style}</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  <div style={{ background: '#13131f', borderRadius: 6, padding: '8px 10px' }}>
+                  <div style={{ background: '#1a1a1a', borderRadius: 6, padding: '8px 10px' }}>
                     <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>OFF SCHEME</div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: '#f59e0b' }}>{offScheme}</div>
                   </div>
-                  <div style={{ background: '#13131f', borderRadius: 6, padding: '8px 10px' }}>
+                  <div style={{ background: '#1a1a1a', borderRadius: 6, padding: '8px 10px' }}>
                     <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>DEF SCHEME</div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: '#6366f1' }}>{defScheme}</div>
                   </div>
@@ -290,7 +272,7 @@ export default function MatchupAnalyzer() {
                   const rs = school === analyzerTeamA ? rosterSchemeA : rosterSchemeB
                   const at = school === analyzerTeamA ? archetypeA : archetypeB
                   return (
-                    <div style={{ marginTop: 10, background: '#0d0d14', borderRadius: 6, padding: '8px 10px', border: '1px solid #1e1e2e' }}>
+                    <div style={{ marginTop: 10, background: '#0e0e0e', borderRadius: 6, padding: '8px 10px', border: '1px solid #2c2c2c' }}>
                       <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>ROSTER-PREDICTED</div>
                       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                         <span style={{ fontSize: 11, color: '#f59e0b' }}>⚡ {rs.offScheme}</span>
@@ -340,12 +322,12 @@ export default function MatchupAnalyzer() {
               </div>
               <ResponsiveContainer width="100%" height={240}>
                 <RadarChart data={radarData} margin={{ top: 8, right: 24, bottom: 8, left: 24 }}>
-                  <PolarGrid stroke="#1e1e2e" />
+                  <PolarGrid stroke="#2c2c2c" />
                   <PolarAngleAxis dataKey="axis" tick={{ fill: '#6b7280', fontSize: 11 }} />
                   <Radar name={metaA.abbr} dataKey="A" stroke={colorA} fill={colorA} fillOpacity={0.18} strokeWidth={2} />
                   <Radar name={metaB.abbr} dataKey="B" stroke={colorB} fill={colorB} fillOpacity={0.18} strokeWidth={2} />
                   <Tooltip
-                    contentStyle={{ background: '#13131f', border: '1px solid #1e1e2e', borderRadius: 8, fontSize: 12 }}
+                    contentStyle={{ background: '#1a1a1a', border: '1px solid #2c2c2c', borderRadius: 8, fontSize: 12 }}
                     formatter={v => [(v * 100).toFixed(0) + ' (normalized)', '']}
                   />
                 </RadarChart>
@@ -370,25 +352,25 @@ export default function MatchupAnalyzer() {
             {/* Headers */}
             <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr 1fr 80px 1fr 1fr 80px', gap: 8, marginBottom: 8 }}>
               {['POS', metaA.abbr + ' Ht', metaB.abbr + ' Ht', 'DIFF', metaA.abbr + ' Exp', metaB.abbr + ' Exp', 'DIFF'].map((h, i) => (
-                <div key={i} style={{ fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', padding: '4px 8px', borderBottom: '1px solid #1e1e2e' }}>{h}</div>
+                <div key={i} style={{ fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', padding: '4px 8px', borderBottom: '1px solid #2c2c2c' }}>{h}</div>
               ))}
             </div>
             {posCompare.map(row => (
-              <div key={row.position} style={{ display: 'grid', gridTemplateColumns: '80px 1fr 1fr 80px 1fr 1fr 80px', gap: 8, padding: '6px 0', borderBottom: '1px solid #13131f' }}>
+              <div key={row.position} style={{ display: 'grid', gridTemplateColumns: '80px 1fr 1fr 80px 1fr 1fr 80px', gap: 8, padding: '6px 0', borderBottom: '1px solid #1a1a1a' }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: '#a5b4fc', padding: '0 8px' }}>{row.position}</div>
-                <div style={{ fontSize: 13, color: '#e2e8f0', padding: '0 8px' }}>
+                <div style={{ fontSize: 13, color: '#ebebeb', padding: '0 8px' }}>
                   {row.teamA ? `${inchesToFtIn(row.teamA.avgHeightIn)} (${row.teamA.n}p)` : <span style={{ color: '#4b5563' }}>—</span>}
                 </div>
-                <div style={{ fontSize: 13, color: '#e2e8f0', padding: '0 8px' }}>
+                <div style={{ fontSize: 13, color: '#ebebeb', padding: '0 8px' }}>
                   {row.teamB ? `${inchesToFtIn(row.teamB.avgHeightIn)} (${row.teamB.n}p)` : <span style={{ color: '#4b5563' }}>—</span>}
                 </div>
                 <div style={{ padding: '0 8px' }}>
                   <DiffBadge value={row.diffHeightIn} unit='"' />
                 </div>
-                <div style={{ fontSize: 13, color: '#e2e8f0', padding: '0 8px' }}>
+                <div style={{ fontSize: 13, color: '#ebebeb', padding: '0 8px' }}>
                   {row.teamA?.avgExperience != null ? `${row.teamA.avgExperience} yr` : <span style={{ color: '#4b5563' }}>—</span>}
                 </div>
-                <div style={{ fontSize: 13, color: '#e2e8f0', padding: '0 8px' }}>
+                <div style={{ fontSize: 13, color: '#ebebeb', padding: '0 8px' }}>
                   {row.teamB?.avgExperience != null ? `${row.teamB.avgExperience} yr` : <span style={{ color: '#4b5563' }}>—</span>}
                 </div>
                 <div style={{ padding: '0 8px' }}>
@@ -406,11 +388,11 @@ export default function MatchupAnalyzer() {
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr 1fr 80px 1fr 1fr 80px 1fr 1fr 80px', gap: 6, marginBottom: 8 }}>
               {['POS', metaA.abbr+' ORTG', metaB.abbr+' ORTG', 'Δ', metaA.abbr+' eFG', metaB.abbr+' eFG', 'Δ', metaA.abbr+' BPM', metaB.abbr+' BPM', 'Δ'].map((h, i) => (
-                <div key={i} style={{ fontSize: 9, color: '#6b7280', textTransform: 'uppercase', padding: '4px 6px', borderBottom: '1px solid #1e1e2e' }}>{h}</div>
+                <div key={i} style={{ fontSize: 9, color: '#6b7280', textTransform: 'uppercase', padding: '4px 6px', borderBottom: '1px solid #2c2c2c' }}>{h}</div>
               ))}
             </div>
             {posCompare.map(row => (
-              <div key={row.position} style={{ display: 'grid', gridTemplateColumns: '80px 1fr 1fr 80px 1fr 1fr 80px 1fr 1fr 80px', gap: 6, padding: '6px 0', borderBottom: '1px solid #13131f' }}>
+              <div key={row.position} style={{ display: 'grid', gridTemplateColumns: '80px 1fr 1fr 80px 1fr 1fr 80px 1fr 1fr 80px', gap: 6, padding: '6px 0', borderBottom: '1px solid #1a1a1a' }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: '#a5b4fc', padding: '0 6px' }}>{row.position}</div>
                 <div style={{ fontSize: 12, color: colorA, padding: '0 6px' }}>{row.teamA?.avgOrtg ?? '—'}</div>
                 <div style={{ fontSize: 12, color: colorB, padding: '0 6px' }}>{row.teamB?.avgOrtg ?? '—'}</div>
@@ -468,7 +450,7 @@ export default function MatchupAnalyzer() {
                             <div style={{ fontSize: 11, color: '#4b5563' }}>{g.n} players · {g.totalMinPg} total min/g</div>
                           </div>
                           <div style={{ textAlign: 'right' }}>
-                            <div style={{ fontSize: 16, fontWeight: 700, color: '#e2e8f0' }}>{inchesToFtIn(g.avgHeightIn)}</div>
+                            <div style={{ fontSize: 16, fontWeight: 700, color: '#ebebeb' }}>{inchesToFtIn(g.avgHeightIn)}</div>
                             <div style={{ fontSize: 10, color: '#6b7280' }}>avg height{g.missingHeight > 0 ? ` (${g.missingHeight} missing)` : ''}</div>
                           </div>
                         </div>
@@ -480,8 +462,8 @@ export default function MatchupAnalyzer() {
                             ['eFG', g.avgEfg != null ? g.avgEfg+'%' : '—'],
                             ['BPM', g.avgBpm != null ? (g.avgBpm > 0 ? '+' : '') + g.avgBpm : '—'],
                           ].map(([lbl, val]) => (
-                            <div key={lbl} style={{ background: '#13131f', borderRadius: 6, padding: '6px 8px', textAlign: 'center' }}>
-                              <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{val}</div>
+                            <div key={lbl} style={{ background: '#1a1a1a', borderRadius: 6, padding: '6px 8px', textAlign: 'center' }}>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: '#ebebeb' }}>{val}</div>
                               <div style={{ fontSize: 10, color: '#4b5563' }}>{lbl}</div>
                             </div>
                           ))}
@@ -528,14 +510,14 @@ export default function MatchupAnalyzer() {
                           {s > 0 ? '+' : ''}{s.toFixed(2)} pts
                         </span>
                       </div>
-                      <div style={{ background: '#1e1e2e', borderRadius: 3, height: 7, position: 'relative', overflow: 'hidden' }}>
+                      <div style={{ background: '#2c2c2c', borderRadius: 3, height: 7, position: 'relative', overflow: 'hidden' }}>
                         <div style={{ position: 'absolute', [s >= 0 ? 'left' : 'right']: '50%', width: barW + '%', height: '100%', background: col, opacity: 0.7 }} />
                         <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: '#374151' }} />
                       </div>
                     </div>
                   )
                 })}
-                <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #1e1e2e', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #2c2c2c', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ fontSize: 12, color: '#6b7280' }}>Total physical edge:</span>
                   <span style={{ fontSize: 16, fontWeight: 800, color: total > 0.5 ? colorA : total < -0.5 ? colorB : '#6b7280' }}>
                     {total > 0 ? '+' : ''}{total.toFixed(2)} pts
@@ -556,13 +538,13 @@ export default function MatchupAnalyzer() {
                 <thead>
                   <tr>
                     {['Pos', 'Ht A', 'Ht B', 'Ht Δ', 'Wt A', 'Wt B', 'Exp Δ', 'ORTG Δ', 'eFG Δ', 'BPM Δ'].map(h => (
-                      <th key={h} style={{ padding: '6px 10px', textAlign: 'left', color: '#6b7280', fontSize: 10, textTransform: 'uppercase', borderBottom: '1px solid #1e1e2e', whiteSpace: 'nowrap' }}>{h}</th>
+                      <th key={h} style={{ padding: '6px 10px', textAlign: 'left', color: '#6b7280', fontSize: 10, textTransform: 'uppercase', borderBottom: '1px solid #2c2c2c', whiteSpace: 'nowrap' }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {posCompare.map(row => (
-                    <tr key={row.position} style={{ borderBottom: '1px solid #13131f' }}>
+                    <tr key={row.position} style={{ borderBottom: '1px solid #1a1a1a' }}>
                       <td style={{ padding: '8px 10px', fontWeight: 700, color: '#a5b4fc' }}>{row.position}</td>
                       <td style={{ padding: '8px 10px', color: colorA }}>{inchesToFtIn(row.teamA?.avgHeightIn)}</td>
                       <td style={{ padding: '8px 10px', color: colorB }}>{inchesToFtIn(row.teamB?.avgHeightIn)}</td>
@@ -603,20 +585,20 @@ export default function MatchupAnalyzer() {
 
               {/* Depth chart */}
               <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>Depth Chart (by minutes)</div>
-              <div style={{ background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 10, overflow: 'hidden' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 44px 44px 44px 44px 52px', background: '#0a0a14' }}>
+              <div style={{ background: '#111111', border: '1px solid #2c2c2c', borderRadius: 10, overflow: 'hidden' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 44px 44px 44px 44px 52px', background: '#0c0c0c' }}>
                   {['Player', 'Min', 'Pts', 'Reb', 'Ast', 'eFG%'].map(h => (
-                    <div key={h} style={{ padding: '7px 10px', fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #1e1e2e' }}>{h}</div>
+                    <div key={h} style={{ padding: '7px 10px', fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #2c2c2c' }}>{h}</div>
                   ))}
                 </div>
                 {squad.filter(p => p.min_pg >= 6).slice(0, 10).map(p => (
-                  <div key={p.name} style={{ display: 'grid', gridTemplateColumns: '1fr 44px 44px 44px 44px 52px', borderBottom: '1px solid #0d0d14' }}>
+                  <div key={p.name} style={{ display: 'grid', gridTemplateColumns: '1fr 44px 44px 44px 44px 52px', borderBottom: '1px solid #0e0e0e' }}>
                     <div style={{ padding: '7px 10px', fontSize: 12, color }}>
                       <div style={{ fontWeight: 500 }}>{p.name}</div>
                       <div style={{ fontSize: 10, color: '#4b5563' }}>{p.pos_type} · {p.class_yr}</div>
                     </div>
                     {[p.min_pg?.toFixed(0), p.pts?.toFixed(1), p.treb?.toFixed(1), p.ast?.toFixed(1)].map((v, i) => (
-                      <div key={i} style={{ padding: '7px 10px', fontSize: 12, color: '#e2e8f0', textAlign: 'right', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>{v ?? '—'}</div>
+                      <div key={i} style={{ padding: '7px 10px', fontSize: 12, color: '#ebebeb', textAlign: 'right', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>{v ?? '—'}</div>
                     ))}
                     <div style={{ padding: '7px 10px', fontSize: 12, color: '#9ca3af', textAlign: 'right', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
                       {p.efg != null ? p.efg.toFixed(1)+'%' : '—'}
@@ -639,7 +621,7 @@ export default function MatchupAnalyzer() {
             <div style={{ color: '#4b5563', fontSize: 13 }}>Select two teams to generate insights.</div>
           )}
           {matchupInsights.map((ins, i) => (
-            <div key={i} style={{ background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 10, padding: '16px 20px' }}>
+            <div key={i} style={{ background: '#111111', border: '1px solid #2c2c2c', borderRadius: 10, padding: '16px 20px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                 <span style={{ fontSize: 18 }}>{ins.icon}</span>
                 <span style={{ fontSize: 13, fontWeight: 600, color: '#a5b4fc' }}>{ins.category}</span>
@@ -659,7 +641,7 @@ export default function MatchupAnalyzer() {
                 <div key={team}>
                   <div style={{ fontSize: 13, fontWeight: 600, color, marginBottom: 10 }}>{meta.abbr}</div>
                   <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 2 }}>Coach</div>
-                  <div style={{ fontSize: 12, color: '#e2e8f0', marginBottom: 8 }}>{coach.name}</div>
+                  <div style={{ fontSize: 12, color: '#ebebeb', marginBottom: 8 }}>{coach.name}</div>
                   <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 2 }}>Offense</div>
                   <div style={{ fontSize: 12, color: '#f59e0b', marginBottom: 2 }}>{offScheme}</div>
                   <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 8 }}>{coach.style}</div>
@@ -671,6 +653,8 @@ export default function MatchupAnalyzer() {
           </div>
         </div>
       )}
+
+      </div>{/* end inner padding wrapper */}
     </div>
   )
 }

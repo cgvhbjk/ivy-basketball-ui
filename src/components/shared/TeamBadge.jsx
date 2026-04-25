@@ -16,7 +16,7 @@ export default function TeamBadge({ school, size = 'md', showName = true }) {
         {meta.abbr}
       </span>
       {showName && (
-        <span style={{ fontSize: size === 'sm' ? 12 : 14, color: '#e2e8f0', fontWeight: 500 }}>
+        <span style={{ fontSize: size === 'sm' ? 12 : 14, color: '#ebebeb', fontWeight: 500 }}>
           {meta.fullName}
         </span>
       )}

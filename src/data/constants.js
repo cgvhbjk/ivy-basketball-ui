@@ -48,6 +48,20 @@ export const TEAM_METRICS = [
   { key: 'ft_pct',        label: 'FT%',                   group: 'Shooting', higherBetter: true,  fmt: v => v.toFixed(1) + '%' },
   // Pace
   { key: 'tempo',         label: 'Tempo (poss/40)',       group: 'Pace', higherBetter: null,  fmt: v => v.toFixed(1) },
+  // Raw per-game totals (new — scraped from Sports-Reference)
+  { key: 'ppp',           label: 'Points Per Poss (×100)',group: 'Scoring',    higherBetter: true,  fmt: v => v.toFixed(2) },
+  { key: 'opp_ppp',       label: 'Opp PPP (×100)',        group: 'Scoring',    higherBetter: false, fmt: v => v.toFixed(2) },
+  { key: 'net_ppp',       label: 'Net PPP (×100)',         group: 'Scoring',    higherBetter: true,  fmt: v => (v > 0 ? '+' : '') + v.toFixed(2) },
+  { key: 'pts_pg',        label: 'Points/G',              group: 'Scoring',    higherBetter: true,  fmt: v => v.toFixed(1) },
+  { key: 'opp_pts_pg',    label: 'Opp Points/G',          group: 'Scoring',    higherBetter: false, fmt: v => v.toFixed(1) },
+  { key: 'reb_margin',    label: 'Rebound Margin',        group: 'Rebounding', higherBetter: true,  fmt: v => (v > 0 ? '+' : '') + v.toFixed(1) },
+  { key: 'trb_pg',        label: 'Rebounds/G',            group: 'Rebounding', higherBetter: true,  fmt: v => v.toFixed(1) },
+  { key: 'opp_trb_pg',    label: 'Opp Rebounds/G',        group: 'Rebounding', higherBetter: false, fmt: v => v.toFixed(1) },
+  { key: 'ast_pg',        label: 'Assists/G',             group: 'Playmaking', higherBetter: true,  fmt: v => v.toFixed(1) },
+  { key: 'tov_pg',        label: 'Turnovers/G',           group: 'Playmaking', higherBetter: false, fmt: v => v.toFixed(1) },
+  { key: 'ast_to_ratio',  label: 'Assist/TO Ratio',       group: 'Playmaking', higherBetter: true,  fmt: v => v.toFixed(2) },
+  { key: 'stl_pg',        label: 'Steals/G',              group: 'Defense',    higherBetter: true,  fmt: v => v.toFixed(1) },
+  { key: 'blk_pg',        label: 'Blocks/G',              group: 'Defense',    higherBetter: true,  fmt: v => v.toFixed(1) },
 ]
 
 export const TEAM_METRIC_MAP = Object.fromEntries(TEAM_METRICS.map(m => [m.key, m]))

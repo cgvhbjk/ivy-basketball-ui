@@ -32,15 +32,15 @@ export default function GlossaryTooltip({ metricKey, children, style: extraStyle
       {show && (
         <div style={{
           position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 9999,
-          background: '#13131f', border: '1px solid #2e2e3e', borderRadius: 8,
+          background: '#1a1a1a', border: '1px solid #2e2e3e', borderRadius: 8,
           padding: '10px 14px', minWidth: 240, maxWidth: 320,
           fontSize: 12, color: '#9ca3af', lineHeight: 1.6,
           boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
           pointerEvents: 'none',
         }}>
-          <div style={{ color: '#e2e8f0', fontWeight: 600, marginBottom: 4 }}>{entry.label}</div>
+          <div style={{ color: '#ebebeb', fontWeight: 600, marginBottom: 4 }}>{entry.label}</div>
           <div style={{ marginBottom: 8 }}>{entry.definition}</div>
-          <div style={{ borderTop: '1px solid #1e1e2e', paddingTop: 6 }}>
+          <div style={{ borderTop: '1px solid #2c2c2c', paddingTop: 6 }}>
             <span style={{ color: '#4b5563', fontSize: 11 }}>Calc: </span>
             <span style={{ color: '#6b7280', fontSize: 11 }}>{entry.calc}</span>
           </div>

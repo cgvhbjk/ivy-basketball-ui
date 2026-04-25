@@ -9,6 +9,9 @@ import players from '../data/players.json'
 import { SCHOOLS, SCHOOL_META, SCHOOL_COLORS, YEARS, TEAM_METRICS } from '../data/constants.js'
 import useInsightStore from '../store/useInsightStore.js'
 import GlossaryTooltip from '../components/shared/GlossaryTooltip.jsx'
+import PageHeader from '../components/shared/PageHeader.jsx'
+import Accordion from '../components/shared/Accordion.jsx'
+import { T } from '../styles/theme.js'
 import {
   computeRelationship, scoreInsight, timeWindowComparison,
   detectThreshold, generateInsightText, linearRegression, detectStyleInteractions,
@@ -19,13 +22,13 @@ import {
 } from '../utils/insightEngine.js'
 import games from '../data/games.json'
 
-const SEL = { background: '#13131f', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '6px 10px', fontSize: 13 }
+const SEL = { background: '#1a1a1a', border: '1px solid #2c2c2c', color: '#ebebeb', borderRadius: 6, padding: '6px 10px', fontSize: 13 }
 const BTN = (active, color = '#4f46e5') => ({
   padding: '5px 12px', borderRadius: 6, fontSize: 12, fontWeight: 500,
   cursor: 'pointer', border: 'none',
-  background: active ? color : '#1e1e2e', color: active ? '#fff' : '#9ca3af',
+  background: active ? color : '#2c2c2c', color: active ? '#fff' : '#9ca3af',
 })
-const CARD = { background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 12, padding: '16px 20px' }
+const CARD = { background: '#111111', border: '1px solid #2c2c2c', borderRadius: 12, padding: '16px 20px' }
 
 function ConfidencePill({ confidence }) {
   const colors = { HIGH: '#10b981', MEDIUM: '#f59e0b', LOW: '#ef4444' }
@@ -45,7 +48,7 @@ function CustomDot({ cx, cy, payload }) {
   return (
     <circle cx={cx} cy={cy} r={5}
       fill={payload?.fill ?? '#6366f1'} fillOpacity={0.85}
-      stroke="#0d0d14" strokeWidth={1} />
+      stroke="#0e0e0e" strokeWidth={1} />
   )
 }
 
@@ -130,7 +133,7 @@ function CorrelationPanel() {
           </div>
 
           {/* Searchable metric browser */}
-          <div style={{ borderTop: '1px solid #1e1e2e', paddingTop: 12 }}>
+          <div style={{ borderTop: '1px solid #2c2c2c', paddingTop: 12 }}>
             <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>Browse metrics</div>
             <input
               value={searchTerm}
@@ -158,7 +161,7 @@ function CorrelationPanel() {
 
         <div style={CARD}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
-            <span style={{ fontSize: 18, fontWeight: 700, color: '#e2e8f0' }}>r = {correlation.toFixed(3)}</span>
+            <span style={{ fontSize: 18, fontWeight: 700, color: '#ebebeb' }}>r = {correlation.toFixed(3)}</span>
             <ConfidencePill confidence={confidence} />
             <span style={{ fontSize: 12, color: '#6b7280' }}>n = {n} team-seasons</span>
             {!valid && reason && <span style={{ fontSize: 12, color: '#ef4444' }}>({reason})</span>}
@@ -169,7 +172,7 @@ function CorrelationPanel() {
           </div>
           <ResponsiveContainer width="100%" height={320}>
             <ComposedChart margin={{ top: 8, right: 16, bottom: 28, left: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1e1e2e" />
+              <CartesianGrid strokeDasharray="3 3" stroke="#2c2c2c" />
               <XAxis dataKey="x" type="number" scale="linear" domain={['auto', 'auto']}
                 tick={{ fill: '#6b7280', fontSize: 11 }}
                 label={{ value: xMeta?.label, position: 'insideBottom', offset: -16, fill: '#6b7280', fontSize: 12 }} />
@@ -185,7 +188,7 @@ function CorrelationPanel() {
                 const d = payload[0].payload
                 if (!d.school) return null
                 return (
-                  <div style={{ background: '#13131f', border: '1px solid #1e1e2e', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
+                  <div style={{ background: '#1a1a1a', border: '1px solid #2c2c2c', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
                     <div style={{ color: SCHOOL_COLORS[d.school], fontWeight: 600 }}>
                       {SCHOOL_META[d.school]?.fullName} {d.year}
                     </div>
@@ -201,7 +204,7 @@ function CorrelationPanel() {
               )}
             </ComposedChart>
           </ResponsiveContainer>
-          <div style={{ marginTop: 16, padding: '12px 16px', background: '#13131f', borderRadius: 8, fontSize: 13, color: '#9ca3af', lineHeight: 1.6 }}>
+          <div style={{ marginTop: 16, padding: '12px 16px', background: '#1a1a1a', borderRadius: 8, fontSize: 13, color: '#9ca3af', lineHeight: 1.6 }}>
             {insightText}
           </div>
         </div>
@@ -217,7 +220,7 @@ function CorrelationPanel() {
           </div>
           <div style={{ display: 'flex', gap: 12 }}>
             {styleInteractions.map(b => (
-              <div key={b.label} style={{ flex: 1, background: '#13131f', borderRadius: 8, padding: '10px 12px', textAlign: 'center' }}>
+              <div key={b.label} style={{ flex: 1, background: '#1a1a1a', borderRadius: 8, padding: '10px 12px', textAlign: 'center' }}>
                 <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 6 }}>{b.label}</div>
                 <div style={{ fontSize: 20, fontWeight: 700, color: b.r == null ? '#4b5563' : Math.abs(b.r) >= 0.45 ? '#10b981' : Math.abs(b.r) >= 0.25 ? '#f59e0b' : '#6b7280' }}>
                   {b.r == null ? '—' : b.r.toFixed(2)}
@@ -254,20 +257,20 @@ function CorrelationPanel() {
       <div>
         <div style={{ fontSize: 13, fontWeight: 600, color: '#a5b4fc', marginBottom: 12 }}>Saved Insights</div>
         {savedInsights.length === 0 ? (
-          <div style={{ fontSize: 13, color: '#4b5563', padding: '16px', background: '#0f0f1a', borderRadius: 8, border: '1px solid #1e1e2e' }}>
+          <div style={{ fontSize: 13, color: '#4b5563', padding: '16px', background: '#111111', borderRadius: 8, border: '1px solid #2c2c2c' }}>
             Find a strong correlation and click Save.
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {savedInsights.map(ins => (
-              <div key={ins.id} style={{ background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 10, padding: '12px 14px' }}>
+              <div key={ins.id} style={{ background: '#111111', border: '1px solid #2c2c2c', borderRadius: 10, padding: '12px 14px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0' }}>{ins.title}</span>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: '#ebebeb' }}>{ins.title}</span>
                   <button style={{ background: 'none', border: 'none', color: '#4b5563', cursor: 'pointer', fontSize: 14, padding: 0 }}
                     onClick={() => removeInsight(ins.id)}>×</button>
                 </div>
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0' }}>r = {ins.correlation.toFixed(2)}</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#ebebeb' }}>r = {ins.correlation.toFixed(2)}</span>
                   <ConfidencePill confidence={ins.confidence} />
                 </div>
                 <div style={{ fontSize: 11, color: '#6b7280' }}>{ins.text}</div>
@@ -327,12 +330,12 @@ function SchemeHalf({ title, schemeType, metrics, defaultMetric, colors, descrip
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
         {data.map((s, i) => (
-          <div key={s.scheme} style={{ background: '#0f0f1a', border: `1px solid ${colors[i]}33`, borderRadius: 8, padding: '10px 12px' }}>
+          <div key={s.scheme} style={{ background: '#111111', border: `1px solid ${colors[i]}33`, borderRadius: 8, padding: '10px 12px' }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: colors[i], marginBottom: 2 }}>{s.scheme}</div>
             <div style={{ fontSize: 10, color: '#4b5563', marginBottom: 8 }}>{descriptions[s.scheme]}</div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
               <div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: '#e2e8f0' }}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: '#ebebeb' }}>
                   {s.avgWinPct != null ? (s.avgWinPct * 100).toFixed(1) + '%' : '—'}
                 </div>
                 <div style={{ fontSize: 10, color: '#6b7280' }}>avg win%</div>
@@ -351,11 +354,11 @@ function SchemeHalf({ title, schemeType, metrics, defaultMetric, colors, descrip
       <div style={CARD}>
         <ResponsiveContainer width="100%" height={200}>
           <BarChart data={data} margin={{ top: 4, right: 8, bottom: 52, left: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#1e1e2e" />
+            <CartesianGrid strokeDasharray="3 3" stroke="#2c2c2c" />
             <XAxis dataKey="scheme" tick={{ fill: '#6b7280', fontSize: 9 }} angle={-25} textAnchor="end" interval={0} />
             <YAxis tick={{ fill: '#6b7280', fontSize: 10 }} domain={['auto', 'auto']} width={44} />
             <Tooltip
-              contentStyle={{ background: '#13131f', border: '1px solid #1e1e2e', borderRadius: 8, fontSize: 12 }}
+              contentStyle={{ background: '#1a1a1a', border: '1px solid #2c2c2c', borderRadius: 8, fontSize: 12 }}
               formatter={(v) => [v != null ? metaFmt(v) : '—', metrics.find(m => m.key === metric)?.label]}
             />
             <Bar dataKey="value" radius={[4, 4, 0, 0]} isAnimationActive={false}>
@@ -413,19 +416,19 @@ function SchemeClassifierPanel() {
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
         {/* Offensive */}
-        <div style={{ background: '#13131f', borderRadius: 10, padding: '16px 18px', borderLeft: '3px solid #f59e0b' }}>
+        <div style={{ background: '#1a1a1a', borderRadius: 10, padding: '16px 18px', borderLeft: '3px solid #f59e0b' }}>
           <div style={{ fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Predicted Offense</div>
           <div style={{ fontSize: 16, fontWeight: 700, color: '#f59e0b', marginBottom: 12 }}>{rosterScheme.offScheme}</div>
           {rosterScheme.offSignals.map((s, i) => (
             <div key={i} style={{ fontSize: 12, color: '#9ca3af', marginBottom: 4 }}>▸ {s}</div>
           ))}
           {season && (
-            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #1e1e2e' }}>
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #2c2c2c' }}>
               <div style={{ fontSize: 10, color: '#4b5563', textTransform: 'uppercase', marginBottom: 6 }}>Efficacy</div>
               <div style={{ display: 'flex', gap: 10 }}>
                 {[['AdjOE', season.adjoe?.toFixed(1)], ['Win%', (season.win_pct * 100).toFixed(1) + '%'], ['eFG%', season.efg_o?.toFixed(1) + '%']].map(([lbl, val]) => (
                   <div key={lbl} style={{ textAlign: 'center' }}>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: '#e2e8f0' }}>{val}</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: '#ebebeb' }}>{val}</div>
                     <div style={{ fontSize: 10, color: '#4b5563' }}>{lbl}</div>
                   </div>
                 ))}
@@ -435,19 +438,19 @@ function SchemeClassifierPanel() {
         </div>
 
         {/* Defensive */}
-        <div style={{ background: '#13131f', borderRadius: 10, padding: '16px 18px', borderLeft: '3px solid #6366f1' }}>
+        <div style={{ background: '#1a1a1a', borderRadius: 10, padding: '16px 18px', borderLeft: '3px solid #6366f1' }}>
           <div style={{ fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Predicted Defense</div>
           <div style={{ fontSize: 16, fontWeight: 700, color: '#6366f1', marginBottom: 12 }}>{rosterScheme.defScheme}</div>
           {rosterScheme.defSignals.map((s, i) => (
             <div key={i} style={{ fontSize: 12, color: '#9ca3af', marginBottom: 4 }}>▸ {s}</div>
           ))}
           {season && (
-            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #1e1e2e' }}>
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #2c2c2c' }}>
               <div style={{ fontSize: 10, color: '#4b5563', textTransform: 'uppercase', marginBottom: 6 }}>Efficacy</div>
               <div style={{ display: 'flex', gap: 10 }}>
                 {[['AdjDE', season.adjde?.toFixed(1)], ['eFG%Alw', season.efg_d?.toFixed(1) + '%'], ['TOV Frc', season.tov_d?.toFixed(1) + '%']].map(([lbl, val]) => (
                   <div key={lbl} style={{ textAlign: 'center' }}>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: '#e2e8f0' }}>{val}</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: '#ebebeb' }}>{val}</div>
                     <div style={{ fontSize: 10, color: '#4b5563' }}>{lbl}</div>
                   </div>
                 ))}
@@ -493,14 +496,14 @@ function ScatterBlock({ points, regressionLine, correlation, n, confidence, xLab
   return (
     <div style={CARD}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <span style={{ fontSize: 16, fontWeight: 700, color: '#e2e8f0' }}>r = {correlation.toFixed(3)}</span>
+        <span style={{ fontSize: 16, fontWeight: 700, color: '#ebebeb' }}>r = {correlation.toFixed(3)}</span>
         <ConfidencePill confidence={confidence} />
         <span style={{ fontSize: 12, color: '#6b7280' }}>n = {n}</span>
         {!valid && reason && <span style={{ fontSize: 11, color: '#ef4444' }}>({reason})</span>}
       </div>
       <ResponsiveContainer width="100%" height={280}>
         <ComposedChart margin={{ top: 8, right: 16, bottom: 28, left: 8 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#1e1e2e" />
+          <CartesianGrid strokeDasharray="3 3" stroke="#2c2c2c" />
           <XAxis dataKey="x" type="number" scale="linear" domain={['auto', 'auto']}
             tick={{ fill: '#6b7280', fontSize: 11 }}
             label={{ value: xLabel, position: 'insideBottom', offset: -16, fill: '#6b7280', fontSize: 12 }} />
@@ -512,7 +515,7 @@ function ScatterBlock({ points, regressionLine, correlation, n, confidence, xLab
             const d = payload[0].payload
             if (!d.school) return null
             return (
-              <div style={{ background: '#13131f', border: '1px solid #1e1e2e', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
+              <div style={{ background: '#1a1a1a', border: '1px solid #2c2c2c', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
                 <div style={{ color: SCHOOL_COLORS[d.school], fontWeight: 600 }}>
                   {d.name ?? SCHOOL_META[d.school]?.fullName} {d.year}
                 </div>
@@ -533,8 +536,8 @@ function ScatterBlock({ points, regressionLine, correlation, n, confidence, xLab
   )
 }
 
-const TBL_HDR  = { padding: '7px 10px', fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #1e1e2e', background: '#0a0a14' }
-const TBL_CELL = { padding: '7px 10px', fontSize: 12, borderBottom: '1px solid #13131f' }
+const TBL_HDR  = { padding: '7px 10px', fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #2c2c2c', background: '#0c0c0c' }
+const TBL_CELL = { padding: '7px 10px', fontSize: 12, borderBottom: '1px solid #1a1a1a' }
 
 // ── Roster & Bio Panel ────────────────────────────────────────────────────────
 
@@ -626,7 +629,7 @@ function RosterBioPanel() {
             xLabel={xBioMeta?.label ?? biodataKey} yLabel={yOutMeta?.label ?? outcomeKey}
             tooltipExtra={() => null}
           />
-          <div style={{ background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 12, overflow: 'hidden', alignSelf: 'start' }}>
+          <div style={{ background: '#111111', border: '1px solid #2c2c2c', borderRadius: 12, overflow: 'hidden', alignSelf: 'start' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 64px 64px' }}>
               <div style={TBL_HDR}>Team / Year</div>
               <div style={{ ...TBL_HDR, textAlign: 'right' }}>{xBioMeta?.label?.split(' ').pop() ?? 'Bio'}</div>
@@ -638,7 +641,7 @@ function RosterBioPanel() {
               return (
                 <div key={`${d.school}${d.year}`} style={{ display: 'grid', gridTemplateColumns: '1fr 64px 64px' }}>
                   <div style={{ ...TBL_CELL, color }}>{SCHOOL_META[d.school]?.abbr} <span style={{ color: '#4b5563', fontSize: 11 }}>{d.year}</span></div>
-                  <div style={{ ...TBL_CELL, color: '#e2e8f0', textAlign: 'right', fontWeight: 600 }}>{d.x?.toFixed(1)}</div>
+                  <div style={{ ...TBL_CELL, color: '#ebebeb', textAlign: 'right', fontWeight: 600 }}>{d.x?.toFixed(1)}</div>
                   <div style={{ ...TBL_CELL, color: '#9ca3af', textAlign: 'right' }}>{yFmt}</div>
                 </div>
               )
@@ -668,7 +671,7 @@ function RosterBioPanel() {
         <div style={CARD}>
           <ResponsiveContainer width="100%" height={280}>
             <ComposedChart margin={{ top: 8, right: 16, bottom: 28, left: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1e1e2e" />
+              <CartesianGrid strokeDasharray="3 3" stroke="#2c2c2c" />
               <XAxis dataKey="x" type="number" scale="linear" domain={['auto','auto']}
                 tick={{ fill: '#6b7280', fontSize: 11 }}
                 label={{ value: 'Height Diff (in, Team A − Team B)', position: 'insideBottom', offset: -16, fill: '#6b7280', fontSize: 12 }} />
@@ -681,8 +684,8 @@ function RosterBioPanel() {
                 if (!active || !payload?.[0]) return null
                 const d = payload[0].payload
                 return (
-                  <div style={{ background: '#13131f', border: '1px solid #1e1e2e', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
-                    <div style={{ color: '#e2e8f0', fontWeight: 600, marginBottom: 4 }}>{d.label}</div>
+                  <div style={{ background: '#1a1a1a', border: '1px solid #2c2c2c', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
+                    <div style={{ color: '#ebebeb', fontWeight: 600, marginBottom: 4 }}>{d.label}</div>
                     <div style={{ color: '#9ca3af' }}>Height diff: {d.x > 0 ? '+' : ''}{d.x}"</div>
                     <div style={{ color: '#9ca3af' }}>Win% diff: {d.y > 0 ? '+' : ''}{(d.y * 100).toFixed(1)}%</div>
                   </div>
@@ -710,11 +713,11 @@ function RosterBioPanel() {
           <table style={{ borderCollapse: 'collapse', fontSize: 12, minWidth: 520 }}>
             <thead>
               <tr>
-                <th style={{ padding: '6px 12px', fontSize: 10, color: '#6b7280', textAlign: 'left', borderBottom: '1px solid #1e1e2e', background: '#0a0a14' }}>
+                <th style={{ padding: '6px 12px', fontSize: 10, color: '#6b7280', textAlign: 'left', borderBottom: '1px solid #2c2c2c', background: '#0c0c0c' }}>
                   Offense ↓ vs Defense →
                 </th>
                 {archetypeMatchupData.archetypes.map(b => (
-                  <th key={b} style={{ padding: '6px 10px', fontSize: 10, color: '#9ca3af', fontWeight: 600, textAlign: 'center', borderBottom: '1px solid #1e1e2e', background: '#0a0a14', whiteSpace: 'nowrap' }}>
+                  <th key={b} style={{ padding: '6px 10px', fontSize: 10, color: '#9ca3af', fontWeight: 600, textAlign: 'center', borderBottom: '1px solid #2c2c2c', background: '#0c0c0c', whiteSpace: 'nowrap' }}>
                     {b}
                   </th>
                 ))}
@@ -722,8 +725,8 @@ function RosterBioPanel() {
             </thead>
             <tbody>
               {archetypeMatchupData.archetypes.map(a => (
-                <tr key={a} style={{ borderBottom: '1px solid #13131f' }}>
-                  <td style={{ padding: '8px 12px', fontWeight: 600, color: '#a5b4fc', whiteSpace: 'nowrap', background: '#0d0d14' }}>{a}</td>
+                <tr key={a} style={{ borderBottom: '1px solid #1a1a1a' }}>
+                  <td style={{ padding: '8px 12px', fontWeight: 600, color: '#a5b4fc', whiteSpace: 'nowrap', background: '#0e0e0e' }}>{a}</td>
                   {archetypeMatchupData.archetypes.map(b => {
                     const cell = archetypeMatchupData.matrix[a][b]
                     if (!cell) return <td key={b} style={{ padding: '8px 10px', textAlign: 'center', color: '#374151' }}>—</td>
@@ -763,7 +766,7 @@ function RosterBioPanel() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
             {/* Height coefficients */}
             <div style={CARD}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0', marginBottom: 14 }}>Height Advantage (pts/inch)</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#ebebeb', marginBottom: 14 }}>Height Advantage (pts/inch)</div>
               {[
                 { label: 'Guard Height Δ',   coef: positionPhysicalImpact.coefficients.guardHeight, pearson: positionPhysicalImpact.pearson.guardHeight },
                 { label: 'Forward Height Δ', coef: positionPhysicalImpact.coefficients.fwdHeight,   pearson: positionPhysicalImpact.pearson.fwdHeight   },
@@ -778,7 +781,7 @@ function RosterBioPanel() {
                       <span style={{ fontSize: 12, color: '#9ca3af' }}>{label}</span>
                       <span style={{ fontSize: 12, fontWeight: 700, color: barColor }}>{coef > 0 ? '+' : ''}{coef}</span>
                     </div>
-                    <div style={{ background: '#1e1e2e', borderRadius: 3, height: 8, position: 'relative', overflow: 'hidden' }}>
+                    <div style={{ background: '#2c2c2c', borderRadius: 3, height: 8, position: 'relative', overflow: 'hidden' }}>
                       <div style={{ position: 'absolute', [coef >= 0 ? 'left' : 'right']: '50%', width: barW / 2 + '%', height: '100%', background: barColor, opacity: 0.7 }} />
                       <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: '#374151' }} />
                     </div>
@@ -790,7 +793,7 @@ function RosterBioPanel() {
 
             {/* Weight coefficients */}
             <div style={CARD}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0', marginBottom: 14 }}>Weight Advantage (pts/lb)</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#ebebeb', marginBottom: 14 }}>Weight Advantage (pts/lb)</div>
               {[
                 { label: 'Guard Weight Δ',   coef: positionPhysicalImpact.coefficients.guardWeight, pearson: positionPhysicalImpact.pearson.guardWeight },
                 { label: 'Forward Weight Δ', coef: positionPhysicalImpact.coefficients.fwdWeight,   pearson: positionPhysicalImpact.pearson.fwdWeight   },
@@ -805,7 +808,7 @@ function RosterBioPanel() {
                       <span style={{ fontSize: 12, color: '#9ca3af' }}>{label}</span>
                       <span style={{ fontSize: 12, fontWeight: 700, color: barColor }}>{coef > 0 ? '+' : ''}{coef}</span>
                     </div>
-                    <div style={{ background: '#1e1e2e', borderRadius: 3, height: 8, position: 'relative', overflow: 'hidden' }}>
+                    <div style={{ background: '#2c2c2c', borderRadius: 3, height: 8, position: 'relative', overflow: 'hidden' }}>
                       <div style={{ position: 'absolute', [coef >= 0 ? 'left' : 'right']: '50%', width: barW / 2 + '%', height: '100%', background: barColor, opacity: 0.7 }} />
                       <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: '#374151' }} />
                     </div>
@@ -816,10 +819,10 @@ function RosterBioPanel() {
             </div>
           </div>
 
-          <div style={{ ...CARD, marginTop: 16, background: '#0d0d14', borderColor: '#f59e0b33' }}>
+          <div style={{ ...CARD, marginTop: 16, background: '#0e0e0e', borderColor: '#f59e0b33' }}>
             <div style={{ fontSize: 12, color: '#f59e0b', fontWeight: 600, marginBottom: 6 }}>Key Finding</div>
             <div style={{ fontSize: 12, color: '#9ca3af', lineHeight: 1.7 }}>
-              Physical attributes collectively explain only <strong style={{ color: '#e2e8f0' }}>{(positionPhysicalImpact.r2 * 100).toFixed(0)}%</strong> of point differential variance in Ivy League games —
+              Physical attributes collectively explain only <strong style={{ color: '#ebebeb' }}>{(positionPhysicalImpact.r2 * 100).toFixed(0)}%</strong> of point differential variance in Ivy League games —
               skill, scheme, and execution dominate. Guard weight advantage ({positionPhysicalImpact.pearson.guardWeight > 0 ? '+' : ''}{positionPhysicalImpact.pearson.guardWeight} r) shows the strongest positive individual correlation,
               while height advantages at all positions are near-zero or slightly negative — contrary to the conventional wisdom that bigger teams win.
               Center height advantage (r = {positionPhysicalImpact.pearson.bigHeight}) is <em>not</em> stronger than guard height (r = {positionPhysicalImpact.pearson.guardHeight}).
@@ -844,22 +847,32 @@ export default function InsightsLab() {
   const [tab, setTab] = useState('correlation')
 
   return (
-    <div style={{ padding: '24px 32px', maxWidth: 1240, margin: '0 auto' }}>
-      <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: '#e2e8f0', margin: 0 }}>Insights Lab</h1>
-        <p style={{ fontSize: 13, color: '#6b7280', margin: '4px 0 12px' }}>
-          Explore relationships in Ivy League basketball data · All seasons 2022–2025
-        </p>
-        <div style={{ display: 'flex', gap: 6 }}>
-          {TABS.map(([v, lbl]) => (
-            <button key={v} style={BTN(tab === v)} onClick={() => setTab(v)}>{lbl}</button>
-          ))}
-        </div>
-      </div>
+    <div style={{ background: T.bg, minHeight: '100vh' }}>
+      <PageHeader
+        title="Insights Lab"
+        subtitle="Explore relationships in Ivy League basketball data · 2022–2025"
+        stats={[
+          { label: 'Team-Seasons',   value: '32' },
+          { label: 'Player-Seasons', value: '458' },
+          { label: 'Ivy Games',      value: '236' },
+          { label: 'Metrics',        value: String(TEAM_METRICS.length) },
+        ]}
+        controls={
+          <div style={{ display: 'flex', gap: 4 }}>
+            {TABS.map(([v, lbl]) => (
+              <button key={v} style={BTN(tab === v)} onClick={() => setTab(v)}>{lbl}</button>
+            ))}
+          </div>
+        }
+      />
+
+      <div style={{ padding: '0 28px 28px', maxWidth: 1280, margin: '0 auto' }}>
 
       {tab === 'correlation' && <CorrelationPanel />}
       {tab === 'schemes'     && <SchemePanel />}
       {tab === 'biodata'     && <RosterBioPanel />}
+
+      </div>{/* end inner padding wrapper */}
     </div>
   )
 }

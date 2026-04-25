@@ -8,7 +8,7 @@ import PlayerLab from './pages/PlayerLab.jsx'
 
 export default function App() {
   return (
-    <div className="min-h-screen" style={{ background: '#0d0d14' }}>
+    <div className="min-h-screen" style={{ background: '#0e0e0e' }}>
       <Navbar />
       <Routes>
         <Route path="/"           element={<Navigate to="/analyzer" replace />} />

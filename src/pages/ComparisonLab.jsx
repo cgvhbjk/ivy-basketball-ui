@@ -9,10 +9,10 @@ import useStore from '../store/useStore.js'
 import TeamBadge from '../components/shared/TeamBadge.jsx'
 import StatCard from '../components/shared/StatCard.jsx'
 
-const SEL = { background: '#13131f', border: '1px solid #1e1e2e', color: '#e2e8f0', borderRadius: 6, padding: '6px 10px', fontSize: 13 }
+const SEL = { background: '#1a1a1a', border: '1px solid #2c2c2c', color: '#ebebeb', borderRadius: 6, padding: '6px 10px', fontSize: 13 }
 const BTN = (active) => ({
   padding: '5px 12px', borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: 'pointer', border: 'none',
-  background: active ? '#4f46e5' : '#1e1e2e', color: active ? '#fff' : '#9ca3af',
+  background: active ? '#4f46e5' : '#2c2c2c', color: active ? '#fff' : '#9ca3af',
 })
 
 const METRIC_GROUPS = [...new Set(TEAM_METRICS.map(m => m.group))]
@@ -64,7 +64,7 @@ export default function ComparisonLab() {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, color: '#e2e8f0', margin: 0 }}>Comparison Lab</h1>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: '#ebebeb', margin: 0 }}>Comparison Lab</h1>
           <p style={{ fontSize: 13, color: '#6b7280', margin: '4px 0 0' }}>Side-by-side team stats · Ivy League Basketball</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -125,16 +125,16 @@ export default function ComparisonLab() {
             const meta = TEAM_METRIC_MAP[key]
             if (!meta) return null
             return (
-              <div key={key} style={{ background: '#0f0f1a', border: '1px solid #1e1e2e', borderRadius: 12, padding: '20px 24px' }}>
+              <div key={key} style={{ background: '#111111', border: '1px solid #2c2c2c', borderRadius: 12, padding: '20px 24px' }}>
                 <div style={{ fontSize: 14, fontWeight: 600, color: '#a5b4fc', marginBottom: 16 }}>{meta.label}</div>
                 <ResponsiveContainer width="100%" height={160}>
                   <LineChart data={trendData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e1e2e" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#2c2c2c" />
                     <XAxis dataKey="year" tick={{ fill: '#6b7280', fontSize: 11 }} />
                     <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} width={48}
                       tickFormatter={v => meta.fmt ? meta.fmt(v).replace('%','') : v} />
                     <Tooltip
-                      contentStyle={{ background: '#13131f', border: '1px solid #1e1e2e', borderRadius: 8, fontSize: 12 }}
+                      contentStyle={{ background: '#1a1a1a', border: '1px solid #2c2c2c', borderRadius: 8, fontSize: 12 }}
                       formatter={(v, name) => [meta.fmt ? meta.fmt(v) : v.toFixed(2), name]}
                     />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
