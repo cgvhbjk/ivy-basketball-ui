@@ -151,7 +151,7 @@ export default function MatchupAnalyzer() {
   const archetypeB    = useMemo(() => computeTeamArchetype(squadB, seasonB),    [squadB, seasonB])
 
   const matchupInsights = useMemo(() =>
-    generateMatchupInsights(seasonA, seasonB, posCompare, schemeOffA, schemeOffB)
+    generateMatchupInsights(seasonA, seasonB, posCompare, schemeOffA, schemeOffB, metaA.abbr, metaB.abbr)
   , [seasonA, seasonB, posCompare, schemeOffA, schemeOffB])
 
   const winPctA = useMemo(() => {

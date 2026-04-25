@@ -427,15 +427,15 @@ export function generatePlayerRoleSummary(player) {
 }
 
 // Generate actionable practice insights based on matchup data
-export function generateMatchupInsights(seasonA, seasonB, posCompare, schemeA, schemeB) {
+export function generateMatchupInsights(seasonA, seasonB, posCompare, schemeA, schemeB, nameA = 'Team A', nameB = 'Team B') {
   const insights = []
   if (!seasonA || !seasonB) return insights
 
   // Pace/tempo insights
   const tempoDiff = (seasonA.tempo ?? 0) - (seasonB.tempo ?? 0)
   if (Math.abs(tempoDiff) >= 3) {
-    const faster = tempoDiff > 0 ? 'Team A' : 'Team B'
-    const slower = tempoDiff > 0 ? 'Team B' : 'Team A'
+    const faster = tempoDiff > 0 ? nameA : nameB
+    const slower = tempoDiff > 0 ? nameB : nameA
     insights.push({
       category: 'Pace',
       icon: '⚡',
@@ -449,13 +449,13 @@ export function generateMatchupInsights(seasonA, seasonB, posCompare, schemeA, s
     insights.push({
       category: 'Shooting',
       icon: '🎯',
-      text: `Team A's offense shoots ${efgDiff.toFixed(1)} eFG points above what Team B's defense typically allows. Expect Team A to create open looks — Team B must contest hard off ball screens.`,
+      text: `${nameA}'s offense shoots ${efgDiff.toFixed(1)} eFG points above what ${nameB}'s defense typically allows. Expect ${nameA} to create open looks — ${nameB} must contest hard off ball screens.`,
     })
   } else if (efgDiff < -2) {
     insights.push({
       category: 'Shooting',
       icon: '🛡',
-      text: `Team B's defense holds opponents ${Math.abs(efgDiff).toFixed(1)} eFG points below Team A's average. Team A should run high-volume attack to get to the free throw line and manufacture easy looks.`,
+      text: `${nameB}'s defense holds opponents ${Math.abs(efgDiff).toFixed(1)} eFG points below ${nameA}'s average. ${nameA} should run high-volume attack to get to the free throw line and manufacture easy looks.`,
     })
   }
 
@@ -464,13 +464,13 @@ export function generateMatchupInsights(seasonA, seasonB, posCompare, schemeA, s
     insights.push({
       category: 'Rebounding',
       icon: '💪',
-      text: `Team A has a significant offensive rebounding advantage. Team B must commit all five players to blocking out, even sacrificing fast-break opportunities after misses.`,
+      text: `${nameA} has a significant offensive rebounding advantage. ${nameB} must commit all five players to blocking out, even sacrificing fast-break opportunities after misses.`,
     })
   } else if ((seasonB.orb ?? 0) - (seasonA.drb ?? 0) > 5) {
     insights.push({
       category: 'Rebounding',
       icon: '💪',
-      text: `Team B crashes the offensive glass aggressively. Team A must box out with discipline and not allow second-chance opportunities.`,
+      text: `${nameB} crashes the offensive glass aggressively. ${nameA} must box out with discipline and not allow second-chance opportunities.`,
     })
   }
 
@@ -479,7 +479,7 @@ export function generateMatchupInsights(seasonA, seasonB, posCompare, schemeA, s
     insights.push({
       category: 'Ball Security',
       icon: '⚠️',
-      text: `Team B forces turnovers at a high rate (${seasonB.tov_d?.toFixed(1)}% TOV%). Team A should use simple ball-movement patterns, avoid dribbling into pressure, and practice live-ball turnover scenarios.`,
+      text: `${nameB} forces turnovers at a high rate (${seasonB.tov_d?.toFixed(1)}% TOV%). ${nameA} should use simple ball-movement patterns, avoid dribbling into pressure, and practice live-ball turnover scenarios.`,
     })
   }
 
@@ -487,8 +487,8 @@ export function generateMatchupInsights(seasonA, seasonB, posCompare, schemeA, s
   if (posCompare?.length) {
     const bigDiff = posCompare.find(p => p.position === 'Big')
     if (bigDiff?.diffHeightIn != null && Math.abs(bigDiff.diffHeightIn) >= 1.5) {
-      const taller = bigDiff.diffHeightIn > 0 ? 'Team A' : 'Team B'
-      const shorter = bigDiff.diffHeightIn > 0 ? 'Team B' : 'Team A'
+      const taller  = bigDiff.diffHeightIn > 0 ? nameA : nameB
+      const shorter = bigDiff.diffHeightIn > 0 ? nameB : nameA
       insights.push({
         category: 'Interior Matchup',
         icon: '🏀',
@@ -497,7 +497,7 @@ export function generateMatchupInsights(seasonA, seasonB, posCompare, schemeA, s
     }
     const guardDiff = posCompare.find(p => p.position === 'Guard')
     if (guardDiff?.diffExperience != null && Math.abs(guardDiff.diffExperience) >= 0.8) {
-      const moreExp = guardDiff.diffExperience > 0 ? 'Team A' : 'Team B'
+      const moreExp = guardDiff.diffExperience > 0 ? nameA : nameB
       insights.push({
         category: 'Guard Experience',
         icon: '🧠',
@@ -511,14 +511,14 @@ export function generateMatchupInsights(seasonA, seasonB, posCompare, schemeA, s
     insights.push({
       category: 'Opponent Scheme',
       icon: '🔄',
-      text: `Team A runs an up-tempo system. Team B should get back on defense immediately after shot attempts and call timeouts to slow momentum runs.`,
+      text: `${nameA} runs an up-tempo system. ${nameB} should get back on defense immediately after shot attempts and call timeouts to slow momentum runs.`,
     })
   }
   if (schemeB === 'High Pressure') {
     insights.push({
       category: 'Opponent Scheme',
       icon: '🔄',
-      text: `Team B employs high-pressure defense. Team A should use ball screens to attack the pressure, keep dribbles alive, and designate a ball-handler for half-court entry resets.`,
+      text: `${nameB} employs high-pressure defense. ${nameA} should use ball screens to attack the pressure, keep dribbles alive, and designate a ball-handler for half-court entry resets.`,
     })
   }
 

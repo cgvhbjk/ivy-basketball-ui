@@ -132,22 +132,22 @@ function CorrelationPanel() {
             </div>
           </div>
 
-          {/* Searchable metric browser */}
-          <div style={{ borderTop: '1px solid #2c2c2c', paddingTop: 12 }}>
-            <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>Browse metrics</div>
+          {/* Metric browser — collapsed by default */}
+          <Accordion title="Browse all metrics" badge={`${TEAM_METRICS.length} metrics`}>
             <input
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
               placeholder="Filter metrics..."
-              style={{ ...SEL, width: 200, marginBottom: 10 }}
+              style={{ ...SEL, width: '100%', boxSizing: 'border-box', marginBottom: 12 }}
             />
             {filteredGroups.map(({ group, metrics }) => (
-              <div key={group} style={{ marginBottom: 8 }}>
+              <div key={group} style={{ marginBottom: 10 }}>
                 <div style={{ fontSize: 10, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>{group}</div>
                 <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
                   {metrics.map(m => (
                     <GlossaryTooltip key={m.key} metricKey={m.key}>
-                      <button style={{ ...BTN(xVar === m.key || yVar === m.key, xVar === m.key ? '#6366f1' : '#059669'), fontSize: 11, padding: '3px 9px' }}
+                      <button
+                        style={{ ...BTN(xVar === m.key || yVar === m.key, xVar === m.key ? '#6366f1' : '#059669'), fontSize: 11, padding: '3px 9px' }}
                         onClick={() => xVar === m.key ? setYVar(m.key) : setXVar(m.key)}>
                         {m.label}
                       </button>
@@ -156,7 +156,7 @@ function CorrelationPanel() {
                 </div>
               </div>
             ))}
-          </div>
+          </Accordion>
         </div>
 
         <div style={CARD}>
@@ -371,93 +371,113 @@ function SchemeHalf({ title, schemeType, metrics, defaultMetric, colors, descrip
   )
 }
 
-function SchemeClassifierPanel() {
-  const [school, setSchool] = useState('yale')
-  const [year,   setYear]   = useState(2025)
-
-  const season = useMemo(() =>
-    teamSeasons.find(s => s.school === school && s.year === year)
-  , [school, year])
-
-  const squad = useMemo(() =>
-    players.filter(p => p.school === school && p.year === year)
-  , [school, year])
-
-  const rosterScheme = useMemo(() =>
-    classifySchemeFromRoster(season, squad)
-  , [season, squad])
-
-  const archetype = useMemo(() =>
-    computeTeamArchetype(squad, season)
-  , [squad, season])
-
-  const color = SCHOOL_COLORS[school]
+function SchemeYearCard({ school, year }) {
+  const color  = SCHOOL_COLORS[school]
+  const season = useMemo(() => teamSeasons.find(s => s.school === school && s.year === year), [school, year])
+  const squad  = useMemo(() => players.filter(p => p.school === school && p.year === year), [school, year])
+  const scheme = useMemo(() => classifySchemeFromRoster(season, squad), [season, squad])
+  const arch   = useMemo(() => computeTeamArchetype(squad, season), [squad, season])
 
   return (
-    <div style={{ ...CARD, marginBottom: 28 }}>
-      <div style={{ fontSize: 14, fontWeight: 700, color: '#a5b4fc', marginBottom: 4 }}>
-        Roster-Based Scheme Classifier
-      </div>
-      <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 16 }}>
-        Predicts offensive and defensive scheme from playing-time distribution, position mix, and physical profile — without using game film.
-      </div>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap' }}>
-        <select style={SEL} value={school} onChange={e => setSchool(e.target.value)}>
-          {SCHOOLS.map(s => <option key={s} value={s}>{SCHOOL_META[s].fullName}</option>)}
-        </select>
-        <select style={SEL} value={year} onChange={e => setYear(+e.target.value)}>
-          {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
-        </select>
-        <span style={{ fontSize: 12, color: '#4b5563' }}>
-          Archetype: <span style={{ color, fontWeight: 600 }}>{archetype.archetype}</span>
-          <span style={{ color: '#374151', marginLeft: 8 }}>{archetype.signals[0]}</span>
+    <div style={{ background: T.surf2, borderRadius: 10, padding: '14px 16px', border: `1px solid ${T.border}` }}>
+      {/* Year badge + archetype */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <span style={{ fontSize: 18, fontWeight: 800, color, lineHeight: 1 }}>{year}</span>
+        <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 4,
+          background: `${color}22`, color }}>
+          {arch.archetype}
         </span>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        {/* Offensive */}
-        <div style={{ background: '#1a1a1a', borderRadius: 10, padding: '16px 18px', borderLeft: '3px solid #f59e0b' }}>
-          <div style={{ fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Predicted Offense</div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: '#f59e0b', marginBottom: 12 }}>{rosterScheme.offScheme}</div>
-          {rosterScheme.offSignals.map((s, i) => (
-            <div key={i} style={{ fontSize: 12, color: '#9ca3af', marginBottom: 4 }}>▸ {s}</div>
-          ))}
-          {season && (
-            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #2c2c2c' }}>
-              <div style={{ fontSize: 10, color: '#4b5563', textTransform: 'uppercase', marginBottom: 6 }}>Efficacy</div>
-              <div style={{ display: 'flex', gap: 10 }}>
-                {[['AdjOE', season.adjoe?.toFixed(1)], ['Win%', (season.win_pct * 100).toFixed(1) + '%'], ['eFG%', season.efg_o?.toFixed(1) + '%']].map(([lbl, val]) => (
-                  <div key={lbl} style={{ textAlign: 'center' }}>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: '#ebebeb' }}>{val}</div>
-                    <div style={{ fontSize: 10, color: '#4b5563' }}>{lbl}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+      {/* Offense row */}
+      <div style={{ marginBottom: 10 }}>
+        <div style={{ fontSize: 9, color: T.textMin, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Offense</div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: T.amber, marginBottom: 4 }}>{scheme.offScheme}</div>
+        {scheme.offSignals.map((s, i) => (
+          <div key={i} style={{ fontSize: 11, color: T.textMd }}>▸ {s}</div>
+        ))}
+      </div>
 
-        {/* Defensive */}
-        <div style={{ background: '#1a1a1a', borderRadius: 10, padding: '16px 18px', borderLeft: '3px solid #6366f1' }}>
-          <div style={{ fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Predicted Defense</div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: '#6366f1', marginBottom: 12 }}>{rosterScheme.defScheme}</div>
-          {rosterScheme.defSignals.map((s, i) => (
-            <div key={i} style={{ fontSize: 12, color: '#9ca3af', marginBottom: 4 }}>▸ {s}</div>
-          ))}
-          {season && (
-            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #2c2c2c' }}>
-              <div style={{ fontSize: 10, color: '#4b5563', textTransform: 'uppercase', marginBottom: 6 }}>Efficacy</div>
-              <div style={{ display: 'flex', gap: 10 }}>
-                {[['AdjDE', season.adjde?.toFixed(1)], ['eFG%Alw', season.efg_d?.toFixed(1) + '%'], ['TOV Frc', season.tov_d?.toFixed(1) + '%']].map(([lbl, val]) => (
-                  <div key={lbl} style={{ textAlign: 'center' }}>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: '#ebebeb' }}>{val}</div>
-                    <div style={{ fontSize: 10, color: '#4b5563' }}>{lbl}</div>
-                  </div>
-                ))}
-              </div>
+      {/* Defense row */}
+      <div style={{ marginBottom: 10 }}>
+        <div style={{ fontSize: 9, color: T.textMin, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Defense</div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: T.accentSoft, marginBottom: 4 }}>{scheme.defScheme}</div>
+        {scheme.defSignals.map((s, i) => (
+          <div key={i} style={{ fontSize: 11, color: T.textMd }}>▸ {s}</div>
+        ))}
+      </div>
+
+      {/* Efficacy strip */}
+      {season && (
+        <div style={{ paddingTop: 10, borderTop: `1px solid ${T.border}`, display: 'flex', gap: 12 }}>
+          {[
+            ['Win%', (season.win_pct * 100).toFixed(0) + '%'],
+            ['AdjOE', season.adjoe?.toFixed(1)],
+            ['AdjDE', season.adjde?.toFixed(1)],
+            ['PPP',   season.ppp?.toFixed(1)],
+          ].map(([lbl, val]) => (
+            <div key={lbl} style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: T.text }}>{val ?? '—'}</div>
+              <div style={{ fontSize: 9, color: T.textLow }}>{lbl}</div>
             </div>
-          )}
+          ))}
         </div>
+      )}
+    </div>
+  )
+}
+
+function SchemeClassifierPanel() {
+  const [school,       setSchool]       = useState('yale')
+  const [activeYears,  setActiveYears]  = useState(new Set([2025]))
+
+  function toggleYear(y) {
+    setActiveYears(prev => {
+      const next = new Set(prev)
+      if (next.has(y)) { if (next.size > 1) next.delete(y) }
+      else next.add(y)
+      return next
+    })
+  }
+
+  const color = SCHOOL_COLORS[school]
+  const sortedYears = YEARS.filter(y => activeYears.has(y))
+
+  return (
+    <div style={{ ...CARD, marginBottom: 28 }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: T.accentSoft, marginBottom: 4 }}>
+        Roster-Based Scheme Classifier
+      </div>
+      <div style={{ fontSize: 12, color: T.textLow, marginBottom: 16 }}>
+        Predicts scheme from playing-time distribution, position mix, and physical profile. Select multiple years to track scheme evolution.
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+        <select style={SEL} value={school} onChange={e => setSchool(e.target.value)}>
+          {SCHOOLS.map(s => <option key={s} value={s}>{SCHOOL_META[s].fullName}</option>)}
+        </select>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {YEARS.map(y => (
+            <button
+              key={y}
+              onClick={() => toggleYear(y)}
+              style={{
+                padding: '5px 11px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                cursor: 'pointer', border: `1px solid ${activeYears.has(y) ? color : T.border}`,
+                background: activeYears.has(y) ? `${color}22` : 'transparent',
+                color: activeYears.has(y) ? color : T.textLow,
+              }}
+            >
+              {y}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${sortedYears.length}, 1fr)`, gap: 12 }}>
+        {sortedYears.map(y => (
+          <SchemeYearCard key={y} school={school} year={y} />
+        ))}
       </div>
     </div>
   )

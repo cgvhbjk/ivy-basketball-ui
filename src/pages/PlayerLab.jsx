@@ -274,11 +274,25 @@ export default function PlayerLab() {
     )
   }
 
-  // Build PageHeader KPI stats for the selected player
+  // PageHeader KPIs — tab-aware (only show individual stats on Profile tab)
+  const headerTitle = tab === 'positions'
+    ? `${SCHOOL_META[selectedSchool].fullName} — Positions`
+    : tab === 'training' && player
+    ? `Training Plan — ${player.name}`
+    : player ? player.name : 'Player Lab'
+
+  const headerSubtitle = tab === 'positions'
+    ? `Playing-time weighted position breakdown · ${selectedYear}`
+    : tab === 'training' && player
+    ? `${SCHOOL_META[selectedSchool].fullName} · ${selectedYear} · ${player.pos_type} · ${broadPositionGroup(player.pos_type)}`
+    : player
+    ? `${SCHOOL_META[selectedSchool].fullName} · ${selectedYear} · ${player.pos_type} · ${player.class_yr}${player.weight_lbs ? ` · ${inchesToFtIn(heightIn)} · ${player.weight_lbs} lbs` : ` · ${inchesToFtIn(heightIn)}`}`
+    : 'Individual player analysis · Ivy League Basketball · 2022–2025'
+
   const headerStats = useMemo(() => {
-    if (!player) return []
+    if (tab !== 'profile' || !player) return []
     return [
-      { label: 'Points/G',   value: player.pts?.toFixed(1),               color: colorA },
+      { label: 'Points/G',   value: player.pts?.toFixed(1),  color: colorA },
       { label: 'Rebounds/G', value: player.treb?.toFixed(1) },
       { label: 'Assists/G',  value: player.ast?.toFixed(1) },
       { label: 'eFG%',       value: player.efg != null ? player.efg.toFixed(1)+'%' : null },
@@ -286,33 +300,31 @@ export default function PlayerLab() {
         color: player.bpm > 0 ? T.green : player.bpm < 0 ? T.red : T.textMd },
       { label: 'Min/G',      value: player.min_pg?.toFixed(1) },
     ]
-  }, [player, colorA])
+  }, [tab, player, colorA])
 
   return (
     <div style={{ background: T.bg, minHeight: '100vh' }}>
       <PageHeader
-        title={player ? player.name : 'Player Lab'}
-        subtitle={player
-          ? `${SCHOOL_META[selectedSchool].fullName} · ${selectedYear} · ${player.pos_type} · ${player.class_yr}${player.weight_lbs ? ` · ${inchesToFtIn(heightIn)} · ${player.weight_lbs} lbs` : ` · ${inchesToFtIn(heightIn)}`}`
-          : 'Individual player analysis · Ivy League Basketball · 2022–2025'}
+        title={headerTitle}
+        subtitle={headerSubtitle}
         stats={headerStats}
         controls={
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-            {/* Selectors */}
             <select style={SEL} value={selectedSchool} onChange={e => handleSchoolChange(e.target.value)}>
               {SCHOOLS.map(s => <option key={s} value={s}>{SCHOOL_META[s].fullName}</option>)}
             </select>
             <select style={SEL} value={selectedYear} onChange={e => handleYearChange(e.target.value)}>
               {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
             </select>
-            <SearchableSelect
-              options={schoolPlayers.map(p => ({ value: p.name, label: p.name }))}
-              value={player?.name ?? ''}
-              onChange={setSelectedPlayer}
-              style={{ minWidth: 160 }}
-            />
-            {/* Tab nav */}
-            <div style={{ display: 'flex', gap: 4, marginLeft: 8 }}>
+            {tab !== 'positions' && (
+              <SearchableSelect
+                options={schoolPlayers.map(p => ({ value: p.name, label: p.name }))}
+                value={player?.name ?? ''}
+                onChange={setSelectedPlayer}
+                style={{ minWidth: 160 }}
+              />
+            )}
+            <div style={{ display: 'flex', gap: 4, marginLeft: 6 }}>
               {[['profile','Profile'], ['positions','Positions'], ['training','Training Plan']].map(([v, lbl]) => (
                 <button key={v} style={BTN(tab === v)} onClick={() => setTab(v)}>{lbl}</button>
               ))}
