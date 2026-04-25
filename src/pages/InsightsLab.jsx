@@ -428,6 +428,7 @@ function SchemeYearCard({ school, year }) {
 }
 
 function SchemeClassifierPanel() {
+  const { saveScheme } = useInsightStore()
   const [school,       setSchool]       = useState('yale')
   const [activeYears,  setActiveYears]  = useState(new Set([2025]))
 
@@ -474,10 +475,84 @@ function SchemeClassifierPanel() {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${sortedYears.length}, 1fr)`, gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${sortedYears.length}, 1fr)`, gap: 12, marginBottom: 16 }}>
         {sortedYears.map(y => (
           <SchemeYearCard key={y} school={school} year={y} />
         ))}
+      </div>
+
+      <button
+        onClick={() => {
+          const cards = sortedYears.map(y => {
+            const s = teamSeasons.find(ts => ts.school === school && ts.year === y)
+            const sq = players.filter(p => p.school === school && p.year === y)
+            const scheme = classifySchemeFromRoster(s, sq)
+            const arch   = computeTeamArchetype(sq, s)
+            return { year: y, offScheme: scheme.offScheme, defScheme: scheme.defScheme,
+                     archetype: arch.archetype, winPct: s?.win_pct, adjoe: s?.adjoe,
+                     adjde: s?.adjde, ppp: s?.ppp, record: s?.record }
+          })
+          saveScheme({
+            id:     `scheme_${school}_${sortedYears.join('_')}`,
+            school,
+            years:  sortedYears,
+            label:  `${SCHOOL_META[school].abbr} · ${sortedYears.join(', ')}`,
+            cards,
+            savedAt: new Date().toLocaleDateString(),
+          })
+        }}
+        style={{ ...BTN(true, T.accent), padding: '7px 18px', fontSize: 13 }}
+      >
+        Save Scheme Snapshot
+      </button>
+    </div>
+  )
+}
+
+function SavedSchemes() {
+  const { savedSchemes, removeScheme } = useInsightStore()
+  if (savedSchemes.length === 0) return null
+  return (
+    <div>
+      <div style={{ fontSize: 13, fontWeight: 600, color: T.accentSoft, marginBottom: 10 }}>
+        Saved Scheme Snapshots
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {savedSchemes.map(item => {
+          const color = SCHOOL_COLORS[item.school]
+          return (
+            <div key={item.id} style={{ background: T.surf, border: `1px solid ${T.border}`, borderRadius: 10, padding: '14px 16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+                <div>
+                  <span style={{ fontSize: 13, fontWeight: 700, color }}>{SCHOOL_META[item.school].fullName}</span>
+                  <span style={{ fontSize: 11, color: T.textLow, marginLeft: 8 }}>{item.savedAt}</span>
+                </div>
+                <button onClick={() => removeScheme(item.id)}
+                  style={{ background: 'none', border: 'none', color: T.textMin, cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 0 }}>
+                  ×
+                </button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: `repeat(${item.cards.length}, 1fr)`, gap: 8 }}>
+                {item.cards.map(c => (
+                  <div key={c.year} style={{ background: T.surf2, borderRadius: 8, padding: '10px 12px', borderLeft: `3px solid ${color}` }}>
+                    <div style={{ fontSize: 14, fontWeight: 800, color, marginBottom: 6 }}>{c.year}</div>
+                    <div style={{ fontSize: 11, color: T.amber, marginBottom: 2 }}>{c.offScheme}</div>
+                    <div style={{ fontSize: 11, color: T.accentSoft, marginBottom: 6 }}>{c.defScheme}</div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      {[['Win%', c.winPct != null ? (c.winPct*100).toFixed(0)+'%' : '—'],
+                        ['PPP',  c.ppp?.toFixed(1) ?? '—']].map(([lbl, val]) => (
+                        <div key={lbl} style={{ textAlign: 'center' }}>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: T.text }}>{val}</div>
+                          <div style={{ fontSize: 9, color: T.textLow }}>{lbl}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+        })}
       </div>
     </div>
   )
@@ -491,6 +566,7 @@ function SchemePanel() {
         <SchemeHalf title="Offensive Schemes" schemeType="off" metrics={OFF_METRICS} defaultMetric="win_pct" colors={OFF_COLORS} descriptions={OFF_DESCRIPTIONS} />
         <SchemeHalf title="Defensive Schemes" schemeType="def" metrics={DEF_METRICS} defaultMetric="adjde"   colors={DEF_COLORS} descriptions={DEF_DESCRIPTIONS} />
       </div>
+      <SavedSchemes />
     </div>
   )
 }
@@ -562,9 +638,10 @@ const TBL_CELL = { padding: '7px 10px', fontSize: 12, borderBottom: '1px solid #
 // ── Roster & Bio Panel ────────────────────────────────────────────────────────
 
 function RosterBioPanel() {
+  const { saveRosterFinding, removeRosterFinding, savedRosterFindings } = useInsightStore()
   const [biodataKey, setBiodataKey] = useState('avg_height_in')
   const [outcomeKey, setOutcomeKey] = useState('win_pct')
-  const [physYear,   setPhysYear]   = useState(2025)
+  const [physYear,   setPhysYear]   = useState(0)   // 0 = all years
 
   const teamBio = useMemo(() =>
     computeBiodataRelationship(rosterAggsWeighted, teamSeasons, biodataKey, outcomeKey)
@@ -591,10 +668,9 @@ function RosterBioPanel() {
 
   const physPairs  = useMemo(() => {
     const aggsAll = buildRosterAggregatesWeighted(players)
-    return buildPhysicalMatchupPairs(
-      teamSeasons.filter(s => s.year === physYear),
-      aggsAll.filter(a => a.year === physYear)
-    )
+    const filteredSeasons = physYear === 0 ? teamSeasons : teamSeasons.filter(s => s.year === physYear)
+    const filteredAggs    = physYear === 0 ? aggsAll     : aggsAll.filter(a => a.year === physYear)
+    return buildPhysicalMatchupPairs(filteredSeasons, filteredAggs)
   }, [physYear])
   const physR = useMemo(() => {
     const valid = physPairs.filter(p => p.heightDiff != null)
@@ -642,6 +718,27 @@ function RosterBioPanel() {
             </GlossaryTooltip>
           </div>
         </div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
+          <button
+            onClick={() => {
+              const { valid } = scoreInsight(teamBio.correlation, teamBio.n)
+              if (!valid) return
+              saveRosterFinding({
+                id:    `roster_${biodataKey}_${outcomeKey}`,
+                type:  'correlation',
+                title: `${xBioMeta?.label ?? biodataKey} → ${yOutMeta?.label ?? outcomeKey}`,
+                body:  `r = ${teamBio.correlation.toFixed(3)} · n = ${teamBio.n} team-seasons`,
+                savedAt: new Date().toLocaleDateString(),
+              })
+            }}
+            style={{ ...BTN(true, T.accent), padding: '6px 16px', fontSize: 12 }}
+          >
+            Save Finding
+          </button>
+          <span style={{ fontSize: 11, color: T.textLow }}>
+            {(() => { const {valid, reason} = scoreInsight(teamBio.correlation, teamBio.n); return valid ? `r = ${teamBio.correlation.toFixed(3)}` : reason })()}
+          </span>
+        </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 20 }}>
           <ScatterBlock
             points={teamBio.points} regressionLine={teamRegLine}
@@ -676,11 +773,14 @@ function RosterBioPanel() {
         <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 16 }}>
           Each point = one cross-school pairing in the same season. Answers: does the taller roster win more often?
         </div>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16 }}>
-          <span style={{ fontSize: 12, color: '#6b7280' }}>Season:</span>
-          <select style={SEL} value={physYear} onChange={e => setPhysYear(+e.target.value)}>
-            {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
-          </select>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, color: T.textLow }}>Season:</span>
+          {[0, ...YEARS].map(y => (
+            <button key={y} onClick={() => setPhysYear(y)}
+              style={{ ...BTN(physYear === y), padding: '5px 12px', fontSize: 12 }}>
+              {y === 0 ? 'All' : y}
+            </button>
+          ))}
           {physR != null && (
             <span style={{ fontSize: 13, color: '#9ca3af' }}>
               r = <span style={{ fontWeight: 700, color: Math.abs(physR) >= 0.35 ? '#10b981' : '#6b7280' }}>{physR.toFixed(3)}</span>
@@ -753,8 +853,20 @@ function RosterBioPanel() {
                     const wr = cell.winRate
                     const bg = wr >= 60 ? '#10b98122' : wr >= 50 ? '#6366f122' : wr >= 40 ? '#f59e0b22' : '#ef444422'
                     const fg = wr >= 60 ? '#10b981'  : wr >= 50 ? '#a5b4fc'  : wr >= 40 ? '#f59e0b'  : '#ef4444'
+                    const isSaved = savedRosterFindings.some(f => f.id === `arch_${a}_${b}`)
                     return (
-                      <td key={b} style={{ padding: '8px 10px', textAlign: 'center', background: bg, borderRadius: 4 }}>
+                      <td
+                        key={b}
+                        title="Click to save this matchup finding"
+                        onClick={() => saveRosterFinding({
+                          id: `arch_${a}_${b}`,
+                          type: 'archetype',
+                          title: `${a} vs ${b}`,
+                          body: `${wr}% win rate · ${cell.wins}W–${cell.games - cell.wins}L · ${cell.games} games`,
+                          savedAt: new Date().toLocaleDateString(),
+                        })}
+                        style={{ padding: '8px 10px', textAlign: 'center', background: bg, borderRadius: 4,
+                          cursor: 'pointer', outline: isSaved ? `2px solid ${fg}` : 'none' }}>
                         <div style={{ fontWeight: 700, color: fg }}>{wr}%</div>
                         <div style={{ fontSize: 9, color: '#4b5563' }}>{cell.games}g</div>
                       </td>
@@ -847,6 +959,50 @@ function RosterBioPanel() {
               while height advantages at all positions are near-zero or slightly negative — contrary to the conventional wisdom that bigger teams win.
               Center height advantage (r = {positionPhysicalImpact.pearson.bigHeight}) is <em>not</em> stronger than guard height (r = {positionPhysicalImpact.pearson.guardHeight}).
             </div>
+            <button
+              onClick={() => saveRosterFinding({
+                id: 'physical_impact_regression',
+                type: 'physical',
+                title: 'Position Physical Impact (OLS)',
+                body: `R² = ${positionPhysicalImpact.r2} · ${positionPhysicalImpact.n} matchups · Guard weight r = ${positionPhysicalImpact.pearson.guardWeight > 0 ? '+' : ''}${positionPhysicalImpact.pearson.guardWeight} · Big height r = ${positionPhysicalImpact.pearson.bigHeight}`,
+                savedAt: new Date().toLocaleDateString(),
+              })}
+              style={{ ...BTN(true, T.accent), marginTop: 12, padding: '6px 16px', fontSize: 12 }}
+            >
+              Save Finding
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Saved Roster Findings ── */}
+      {savedRosterFindings.length > 0 && (
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: T.accentSoft, marginBottom: 10 }}>
+            Saved Findings
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {savedRosterFindings.map(item => (
+              <div key={item.id} style={{ background: T.surf, border: `1px solid ${T.border}`, borderRadius: 8, padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4,
+                      background: item.type === 'archetype' ? `${T.accent}22` : item.type === 'physical' ? `${T.amber}22` : `${T.green}22`,
+                      color:      item.type === 'archetype' ? T.accentSoft : item.type === 'physical' ? T.amber : T.green,
+                      fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                      {item.type}
+                    </span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: T.text }}>{item.title}</span>
+                    <span style={{ fontSize: 10, color: T.textMin }}>{item.savedAt}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: T.textMd }}>{item.body}</div>
+                </div>
+                <button onClick={() => removeRosterFinding(item.id)}
+                  style={{ background: 'none', border: 'none', color: T.textMin, cursor: 'pointer', fontSize: 16, lineHeight: 1, flexShrink: 0, padding: 0 }}>
+                  ×
+                </button>
+              </div>
+            ))}
           </div>
         </div>
       )}

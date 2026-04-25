@@ -49,7 +49,10 @@ const RADAR_DIMS = [
 ]
 
 function positionBreakdownWeighted(allPlayers, year) {
-  const pool = allPlayers.filter(p => p.year === year && p.min_pg >= 8 && p.pos_type)
+  // year === null means use allPlayers as-is (already pre-filtered by caller)
+  const pool = year === null
+    ? allPlayers.filter(p => p.min_pg >= 8 && p.pos_type)
+    : allPlayers.filter(p => p.year === year && p.min_pg >= 8 && p.pos_type)
   const groups = {}
   for (const p of pool) {
     const g = p.pos_type
@@ -198,7 +201,8 @@ export default function PlayerLab() {
     setSelectedSchool, setSelectedYear, setSelectedPlayer, setCompareSchool, setCompareYear,
   } = usePlayerStore()
 
-  const [tab, setTab] = useState('profile')
+  const [tab,     setTab]     = useState('profile')
+  const [posYear, setPosYear] = useState(0)   // 0 = all years
 
   const colorA = SCHOOL_COLORS[selectedSchool]
   const colorB = SCHOOL_COLORS[compareSchool]
@@ -227,7 +231,11 @@ export default function PlayerLab() {
     })
   }, [player, norms])
 
-  const posBiodata = useMemo(() => positionBreakdownWeighted(players, selectedYear), [selectedYear])
+  // posYear === 0 means aggregate all years; otherwise filter to the specific year
+  const posBiodata = useMemo(() => {
+    const pool = posYear === 0 ? players : players.filter(p => p.year === posYear)
+    return positionBreakdownWeighted(pool, null)   // null = don't filter by year inside
+  }, [posYear])
 
   // S&C training plan — based on position and combine targets only, not in-game stats
   const trainingPlan = useMemo(() => generateTrainingPlan(player), [player])
@@ -474,11 +482,17 @@ export default function PlayerLab() {
       {tab === 'positions' && (
         <div>
           <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
-            <span style={{ fontSize: 13, color: '#6b7280' }}>Season:</span>
-            <select style={SEL} value={selectedYear} onChange={e => setSelectedYear(+e.target.value)}>
-              {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
-            </select>
-            <span style={{ fontSize: 12, color: '#4b5563', marginLeft: 8 }}>Playing-time weighted averages · min 8 min/g</span>
+            <span style={{ fontSize: 12, color: T.textLow }}>Season:</span>
+            {[0, ...YEARS].map(y => (
+              <button key={y} onClick={() => setPosYear(y)}
+                style={{ ...BTN(posYear === y), padding: '5px 12px', fontSize: 12 }}>
+                {y === 0 ? 'All Years' : y}
+              </button>
+            ))}
+            <span style={{ fontSize: 12, color: T.textMin, marginLeft: 4 }}>
+              · Playing-time weighted averages · min 8 min/g
+              {posYear === 0 && <span style={{ color: T.amber }}> · aggregated 2022–2025</span>}
+            </span>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14, marginBottom: 28 }}>
@@ -502,7 +516,12 @@ export default function PlayerLab() {
           </div>
 
           <div style={{ background: '#111111', border: '1px solid #2c2c2c', borderRadius: 12, padding: '20px 24px' }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: '#a5b4fc', marginBottom: 4 }}>Offensive Rating &amp; Scoring by Position Type</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#a5b4fc', marginBottom: 4 }}>
+              Offensive Rating &amp; Scoring by Position Type
+              <span style={{ fontSize: 11, fontWeight: 400, color: T.textLow, marginLeft: 8 }}>
+                {posYear === 0 ? 'All Years 2022–2025' : posYear}
+              </span>
+            </div>
             <div style={{ fontSize: 11, color: '#4b5563', marginBottom: 16 }}>
               <span style={{ color: '#6366f1' }}>■</span> ORTG (left axis) &nbsp;
               <span style={{ color: '#10b981' }}>■</span> Pts/G (right axis)
