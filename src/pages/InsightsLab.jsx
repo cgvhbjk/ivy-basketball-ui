@@ -21,6 +21,7 @@ import {
   computeArchetypeMatchupMatrix, computePositionPhysicalImpact,
 } from '../utils/insightEngine.js'
 import games from '../data/games.json'
+import { getCoach } from '../data/coachMeta.js'
 
 const SEL = { background: '#1a1a1a', border: '1px solid #2c2c2c', color: '#ebebeb', borderRadius: 6, padding: '6px 10px', fontSize: 13 }
 const BTN = (active, color = '#4f46e5') => ({
@@ -380,54 +381,136 @@ function SchemeHalf({ title, schemeType, metrics, defaultMetric, colors, descrip
   )
 }
 
-function SchemeYearCard({ school, year }) {
-  const color  = SCHOOL_COLORS[school]
-  const season = useMemo(() => teamSeasons.find(s => s.school === school && s.year === year), [school, year])
-  const squad  = useMemo(() => players.filter(p => p.school === school && p.year === year), [school, year])
-  const scheme = useMemo(() => classifySchemeFromRoster(season, squad), [season, squad])
-  const arch   = useMemo(() => computeTeamArchetype(squad, season), [squad, season])
+// Single combined card — averages stats across all selected years, shows coach, and
+// puts a compact year-by-year history at the bottom when multiple years are active.
+function SchemeCombinedCard({ school, years }) {
+  const color = SCHOOL_COLORS[school]
+
+  // Per-year data (memoised once)
+  const yearData = useMemo(() => years.map(y => {
+    const season = teamSeasons.find(s => s.school === school && s.year === y)
+    const squad  = players.filter(p => p.school === school && p.year === y)
+    const scheme = classifySchemeFromRoster(season, squad)
+    const arch   = computeTeamArchetype(squad, season)
+    const coach  = getCoach(school, y)
+    return { year: y, season, squad, scheme, arch, coach }
+  }), [school, years])
+
+  // Average all numeric season stats → "typical season" used for scheme prediction
+  const avgSeason = useMemo(() => {
+    const valid = yearData.map(d => d.season).filter(Boolean)
+    if (!valid.length) return null
+    const avg = key => valid.reduce((s, ts) => s + (ts[key] ?? 0), 0) / valid.length
+    return {
+      tempo: avg('tempo'), three_rate_o: avg('three_rate_o'), tov_o: avg('tov_o'),
+      two_pct_o: avg('two_pct_o'), blk_d: avg('blk_d'), efg_d: avg('efg_d'),
+      tov_d: avg('tov_d'), efg_o: avg('efg_o'), stl_d: avg('stl_d'),
+      adjoe: avg('adjoe'), adjde: avg('adjde'), win_pct: avg('win_pct'),
+      ppp: avg('ppp') || null,
+    }
+  }, [yearData])
+
+  // Use the most recent year's squad for scheme/archetype classification
+  const latestData  = yearData[yearData.length - 1]
+  const baseSquad   = latestData?.squad ?? []
+  const combined    = useMemo(() => classifySchemeFromRoster(avgSeason, baseSquad), [avgSeason, baseSquad])
+  const combinedArch= useMemo(() => computeTeamArchetype(baseSquad, avgSeason), [baseSquad, avgSeason])
+
+  // Coach — detect if it changed across the selected years
+  const latestCoach  = latestData?.coach
+  const coachChanged = years.length > 1 && yearData.some(d => d.coach?.name !== latestCoach?.name)
+  const yearLabel    = years.length === 1 ? `${years[0]}` : `${years[0]}–${years[years.length - 1]}`
 
   return (
-    <div style={{ background: T.surf2, borderRadius: 10, padding: '14px 16px', border: `1px solid ${T.border}` }}>
-      {/* Year badge + archetype */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <span style={{ fontSize: 18, fontWeight: 800, color, lineHeight: 1 }}>{year}</span>
-        <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 4,
+    <div style={{ background: T.surf2, borderRadius: 10, padding: '16px 18px', border: `1px solid ${T.border}` }}>
+
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 800, color, lineHeight: 1.1 }}>{yearLabel}</div>
+          {years.length > 1 && (
+            <div style={{ fontSize: 10, color: T.textLow, marginTop: 2 }}>averaged · {years.length} seasons</div>
+          )}
+        </div>
+        <span style={{ fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 4,
           background: `${color}22`, color }}>
-          {arch.archetype}
+          {combinedArch.archetype}
         </span>
       </div>
 
-      {/* Offense row */}
+      {/* Coach */}
+      {latestCoach && (
+        <div style={{ marginBottom: 12, padding: '9px 11px', background: T.surf, borderRadius: 7,
+          borderLeft: `3px solid ${color}` }}>
+          <div style={{ fontSize: 9, color: T.textMin, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 3 }}>
+            Head Coach{coachChanged ? ` (${latestData.year})` : ''}
+          </div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: T.text }}>{latestCoach.name}</div>
+          <div style={{ fontSize: 11, color: T.textMd, marginTop: 3, lineHeight: 1.5 }}>{latestCoach.style}</div>
+        </div>
+      )}
+
+      {/* Offense */}
       <div style={{ marginBottom: 10 }}>
         <div style={{ fontSize: 9, color: T.textMin, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Offense</div>
-        <div style={{ fontSize: 13, fontWeight: 700, color: T.amber, marginBottom: 4 }}>{scheme.offScheme}</div>
-        {scheme.offSignals.map((s, i) => (
+        <div style={{ fontSize: 13, fontWeight: 700, color: T.amber, marginBottom: 4 }}>{combined.offScheme}</div>
+        {combined.offSignals.map((s, i) => (
           <div key={i} style={{ fontSize: 11, color: T.textMd }}>▸ {s}</div>
         ))}
       </div>
 
-      {/* Defense row */}
-      <div style={{ marginBottom: 10 }}>
+      {/* Defense */}
+      <div style={{ marginBottom: 12 }}>
         <div style={{ fontSize: 9, color: T.textMin, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Defense</div>
-        <div style={{ fontSize: 13, fontWeight: 700, color: T.accentSoft, marginBottom: 4 }}>{scheme.defScheme}</div>
-        {scheme.defSignals.map((s, i) => (
+        <div style={{ fontSize: 13, fontWeight: 700, color: T.accentSoft, marginBottom: 4 }}>{combined.defScheme}</div>
+        {combined.defSignals.map((s, i) => (
           <div key={i} style={{ fontSize: 11, color: T.textMd }}>▸ {s}</div>
         ))}
       </div>
 
-      {/* Efficacy strip */}
-      {season && (
-        <div style={{ paddingTop: 10, borderTop: `1px solid ${T.border}`, display: 'flex', gap: 12 }}>
+      {/* Averaged efficacy */}
+      {avgSeason && (
+        <div style={{ paddingTop: 10, borderTop: `1px solid ${T.border}`,
+          marginBottom: years.length > 1 ? 12 : 0, display: 'flex', gap: 16 }}>
           {[
-            ['Win%', (season.win_pct * 100).toFixed(0) + '%'],
-            ['AdjOE', season.adjoe?.toFixed(1)],
-            ['AdjDE', season.adjde?.toFixed(1)],
-            ['PPP',   season.ppp?.toFixed(1)],
+            ['Win%',  (avgSeason.win_pct * 100).toFixed(0) + '%'],
+            ['AdjOE', avgSeason.adjoe?.toFixed(1)],
+            ['AdjDE', avgSeason.adjde?.toFixed(1)],
+            ['PPP',   avgSeason.ppp?.toFixed(1)],
           ].map(([lbl, val]) => (
             <div key={lbl} style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: T.text }}>{val ?? '—'}</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: T.text }}>{val ?? '—'}</div>
               <div style={{ fontSize: 9, color: T.textLow }}>{lbl}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Year-by-year history — only shown when multiple years selected */}
+      {years.length > 1 && (
+        <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 10 }}>
+          <div style={{ fontSize: 9, color: T.textMin, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+            Year History
+          </div>
+          {yearData.map(d => (
+            <div key={d.year} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color, width: 38, flexShrink: 0 }}>{d.year}</span>
+              <span style={{ fontSize: 11, color: T.amber, flex: 1, minWidth: 0,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {d.scheme.offScheme}
+              </span>
+              <span style={{ fontSize: 11, color: T.accentSoft, flex: 1, minWidth: 0,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {d.scheme.defScheme}
+              </span>
+              <span style={{ fontSize: 11, color: T.textLow, flexShrink: 0 }}>
+                {d.season?.record ?? '—'}
+              </span>
+              {coachChanged && (
+                <span style={{ fontSize: 10, color: T.textMin, flexShrink: 0 }}>
+                  {d.coach?.name?.split(' ').slice(-1)[0]}
+                </span>
+              )}
             </div>
           ))}
         </div>
@@ -484,33 +567,30 @@ function SchemeClassifierPanel() {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${sortedYears.length}, 1fr)`, gap: 12, marginBottom: 16 }}>
-        {sortedYears.map(y => (
-          <SchemeYearCard key={y} school={school} year={y} />
-        ))}
-      </div>
+      <SchemeCombinedCard school={school} years={sortedYears} />
 
       <button
         onClick={() => {
           const cards = sortedYears.map(y => {
-            const s = teamSeasons.find(ts => ts.school === school && ts.year === y)
+            const s  = teamSeasons.find(ts => ts.school === school && ts.year === y)
             const sq = players.filter(p => p.school === school && p.year === y)
-            const scheme = classifySchemeFromRoster(s, sq)
-            const arch   = computeTeamArchetype(sq, s)
-            return { year: y, offScheme: scheme.offScheme, defScheme: scheme.defScheme,
-                     archetype: arch.archetype, winPct: s?.win_pct, adjoe: s?.adjoe,
-                     adjde: s?.adjde, ppp: s?.ppp, record: s?.record }
+            const sc = classifySchemeFromRoster(s, sq)
+            const ar = computeTeamArchetype(sq, s)
+            const co = getCoach(school, y)
+            return { year: y, offScheme: sc.offScheme, defScheme: sc.defScheme,
+                     archetype: ar.archetype, winPct: s?.win_pct, adjoe: s?.adjoe,
+                     adjde: s?.adjde, ppp: s?.ppp, record: s?.record, coach: co?.name }
           })
           saveScheme({
-            id:     `scheme_${school}_${sortedYears.join('_')}`,
+            id:      `scheme_${school}_${sortedYears.join('_')}`,
             school,
-            years:  sortedYears,
-            label:  `${SCHOOL_META[school].abbr} · ${sortedYears.join(', ')}`,
+            years:   sortedYears,
+            label:   `${SCHOOL_META[school].abbr} · ${sortedYears.length > 1 ? `${sortedYears[0]}–${sortedYears[sortedYears.length-1]}` : sortedYears[0]}`,
             cards,
             savedAt: new Date().toLocaleDateString(),
           })
         }}
-        style={{ ...BTN(true, T.accent), padding: '7px 18px', fontSize: 13 }}
+        style={{ ...BTN(true, T.accent), padding: '7px 18px', fontSize: 13, marginTop: 12 }}
       >
         Save Scheme Snapshot
       </button>
