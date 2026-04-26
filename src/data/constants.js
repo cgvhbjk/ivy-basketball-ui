@@ -19,49 +19,62 @@ export const SCHOOL_COLORS = Object.fromEntries(
 export const YEARS = [2022, 2023, 2024, 2025]
 
 // ---- Team metric definitions ----
-// Used in Comparison Lab and Insights Lab dropdowns
+// Groups are ordered top-to-bottom by how directly they answer "how good is this team?"
+// Insertion order = display order in dropdowns and metric browser.
 export const TEAM_METRICS = [
-  // Record
-  { key: 'win_pct',       label: 'Win %',               group: 'Record',     higherBetter: true,  fmt: v => (v * 100).toFixed(1) + '%' },
-  { key: 'conf_win_pct',  label: 'Conf Win %',           group: 'Record',     higherBetter: true,  fmt: v => (v * 100).toFixed(1) + '%' },
+  // ── Outcomes ───────────────────────────────────────────────────────────────
+  { key: 'win_pct',       label: 'Win %',              group: 'Outcomes', higherBetter: true,  fmt: v => (v * 100).toFixed(1) + '%' },
+  { key: 'conf_win_pct',  label: 'Conf Win %',          group: 'Outcomes', higherBetter: true,  fmt: v => (v * 100).toFixed(1) + '%' },
+  { key: 'barthag',       label: 'Predictive Win %',    group: 'Outcomes', higherBetter: true,  fmt: v => (v * 100).toFixed(1) + '%' },
+
+  // ── Efficiency ─────────────────────────────────────────────────────────────
+  { key: 'adjoe',         label: 'Adj. Off. Efficiency', group: 'Efficiency', higherBetter: true,  fmt: v => v.toFixed(1) },
+  { key: 'adjde',         label: 'Adj. Def. Efficiency', group: 'Efficiency', higherBetter: false, fmt: v => v.toFixed(1) },
   { key: 'net_efficiency',label: 'Net Efficiency',        group: 'Efficiency', higherBetter: true,  fmt: v => (v > 0 ? '+' : '') + v.toFixed(1) },
-  // Efficiency
-  { key: 'adjoe',         label: 'Adj Off Efficiency',   group: 'Efficiency', higherBetter: true,  fmt: v => v.toFixed(1) },
-  { key: 'adjde',         label: 'Adj Def Efficiency',   group: 'Efficiency', higherBetter: false, fmt: v => v.toFixed(1) },
-  { key: 'barthag',       label: 'Predictive Win %',     group: 'Efficiency', higherBetter: true,  fmt: v => (v * 100).toFixed(1) + '%' },
-  // Four Factors — Offense
-  { key: 'efg_o',         label: 'eFG% (Off)',           group: 'Four Factors', higherBetter: true,  fmt: v => v.toFixed(1) + '%' },
-  { key: 'tov_o',         label: 'TOV% (Off)',           group: 'Four Factors', higherBetter: false, fmt: v => v.toFixed(1) + '%' },
-  { key: 'orb',           label: 'Off Reb %',            group: 'Four Factors', higherBetter: true,  fmt: v => v.toFixed(1) + '%' },
-  { key: 'ftr_o',         label: 'FT Rate (Off)',        group: 'Four Factors', higherBetter: true,  fmt: v => v.toFixed(1) },
-  // Four Factors — Defense
-  { key: 'efg_d',         label: 'eFG% Allowed',         group: 'Four Factors', higherBetter: false, fmt: v => v.toFixed(1) + '%' },
-  { key: 'tov_d',         label: 'TOV% Forced',          group: 'Four Factors', higherBetter: true,  fmt: v => v.toFixed(1) + '%' },
-  { key: 'drb',           label: 'Def Reb %',            group: 'Four Factors', higherBetter: true,  fmt: v => v.toFixed(1) + '%' },
-  { key: 'ftr_d',         label: 'FT Rate Allowed',      group: 'Four Factors', higherBetter: false, fmt: v => v.toFixed(1) },
-  // Shooting
+  { key: 'ppp',           label: 'Points Per 100 Poss',  group: 'Efficiency', higherBetter: true,  fmt: v => v.toFixed(2) },
+  { key: 'opp_ppp',       label: 'Opp Points Per 100',   group: 'Efficiency', higherBetter: false, fmt: v => v.toFixed(2) },
+  { key: 'net_ppp',       label: 'Net PPP',               group: 'Efficiency', higherBetter: true,  fmt: v => (v > 0 ? '+' : '') + v.toFixed(2) },
+
+  // ── Scoring ────────────────────────────────────────────────────────────────
+  { key: 'pts_pg',        label: 'Points/G',             group: 'Scoring', higherBetter: true,  fmt: v => v.toFixed(1) },
+  { key: 'opp_pts_pg',    label: 'Opp Points/G',         group: 'Scoring', higherBetter: false, fmt: v => v.toFixed(1) },
+
+  // ── Offensive Four Factors ─────────────────────────────────────────────────
+  { key: 'efg_o',         label: 'eFG% (Off)',           group: 'Off. Four Factors', higherBetter: true,  fmt: v => v.toFixed(1) + '%' },
+  { key: 'tov_o',         label: 'Turnover % (Off)',     group: 'Off. Four Factors', higherBetter: false, fmt: v => v.toFixed(1) + '%' },
+  { key: 'orb',           label: 'Off. Rebound %',       group: 'Off. Four Factors', higherBetter: true,  fmt: v => v.toFixed(1) + '%' },
+  { key: 'ftr_o',         label: 'FT Rate (Off)',        group: 'Off. Four Factors', higherBetter: true,  fmt: v => v.toFixed(1) },
+
+  // ── Defensive Four Factors ─────────────────────────────────────────────────
+  { key: 'efg_d',         label: 'eFG% Allowed',         group: 'Def. Four Factors', higherBetter: false, fmt: v => v.toFixed(1) + '%' },
+  { key: 'tov_d',         label: 'Turnover % Forced',    group: 'Def. Four Factors', higherBetter: true,  fmt: v => v.toFixed(1) + '%' },
+  { key: 'drb',           label: 'Def. Rebound %',       group: 'Def. Four Factors', higherBetter: true,  fmt: v => v.toFixed(1) + '%' },
+  { key: 'ftr_d',         label: 'FT Rate Allowed',      group: 'Def. Four Factors', higherBetter: false, fmt: v => v.toFixed(1) },
+
+  // ── Shooting ───────────────────────────────────────────────────────────────
   { key: 'three_pct_o',   label: '3P% (Off)',            group: 'Shooting', higherBetter: true,  fmt: v => v.toFixed(1) + '%' },
   { key: 'three_pct_d',   label: '3P% Allowed',          group: 'Shooting', higherBetter: false, fmt: v => v.toFixed(1) + '%' },
-  { key: 'three_rate_o',  label: '3PA Rate (Off)',        group: 'Shooting', higherBetter: null,  fmt: v => v.toFixed(1) + '%' },
-  { key: 'two_pct_o',     label: '2P% (Off)',             group: 'Shooting', higherBetter: true,  fmt: v => v.toFixed(1) + '%' },
-  { key: 'two_pct_d',     label: '2P% Allowed',           group: 'Shooting', higherBetter: false, fmt: v => v.toFixed(1) + '%' },
-  { key: 'ft_pct',        label: 'FT%',                   group: 'Shooting', higherBetter: true,  fmt: v => v.toFixed(1) + '%' },
-  // Pace
-  { key: 'tempo',         label: 'Tempo (poss/40)',       group: 'Pace', higherBetter: null,  fmt: v => v.toFixed(1) },
-  // Raw per-game totals (new — scraped from Sports-Reference)
-  { key: 'ppp',           label: 'Points Per Poss (×100)',group: 'Scoring',    higherBetter: true,  fmt: v => v.toFixed(2) },
-  { key: 'opp_ppp',       label: 'Opp PPP (×100)',        group: 'Scoring',    higherBetter: false, fmt: v => v.toFixed(2) },
-  { key: 'net_ppp',       label: 'Net PPP (×100)',         group: 'Scoring',    higherBetter: true,  fmt: v => (v > 0 ? '+' : '') + v.toFixed(2) },
-  { key: 'pts_pg',        label: 'Points/G',              group: 'Scoring',    higherBetter: true,  fmt: v => v.toFixed(1) },
-  { key: 'opp_pts_pg',    label: 'Opp Points/G',          group: 'Scoring',    higherBetter: false, fmt: v => v.toFixed(1) },
-  { key: 'reb_margin',    label: 'Rebound Margin',        group: 'Rebounding', higherBetter: true,  fmt: v => (v > 0 ? '+' : '') + v.toFixed(1) },
-  { key: 'trb_pg',        label: 'Rebounds/G',            group: 'Rebounding', higherBetter: true,  fmt: v => v.toFixed(1) },
-  { key: 'opp_trb_pg',    label: 'Opp Rebounds/G',        group: 'Rebounding', higherBetter: false, fmt: v => v.toFixed(1) },
-  { key: 'ast_pg',        label: 'Assists/G',             group: 'Playmaking', higherBetter: true,  fmt: v => v.toFixed(1) },
-  { key: 'tov_pg',        label: 'Turnovers/G',           group: 'Playmaking', higherBetter: false, fmt: v => v.toFixed(1) },
-  { key: 'ast_to_ratio',  label: 'Assist/TO Ratio',       group: 'Playmaking', higherBetter: true,  fmt: v => v.toFixed(2) },
-  { key: 'stl_pg',        label: 'Steals/G',              group: 'Defense',    higherBetter: true,  fmt: v => v.toFixed(1) },
-  { key: 'blk_pg',        label: 'Blocks/G',              group: 'Defense',    higherBetter: true,  fmt: v => v.toFixed(1) },
+  { key: 'three_rate_o',  label: '3-Point Attempt Rate', group: 'Shooting', higherBetter: null,  fmt: v => v.toFixed(1) + '%' },
+  { key: 'two_pct_o',     label: '2P% (Off)',            group: 'Shooting', higherBetter: true,  fmt: v => v.toFixed(1) + '%' },
+  { key: 'two_pct_d',     label: '2P% Allowed',          group: 'Shooting', higherBetter: false, fmt: v => v.toFixed(1) + '%' },
+  { key: 'ft_pct',        label: 'Free Throw %',         group: 'Shooting', higherBetter: true,  fmt: v => v.toFixed(1) + '%' },
+
+  // ── Rebounding ─────────────────────────────────────────────────────────────
+  { key: 'reb_margin',    label: 'Rebound Margin',       group: 'Rebounding', higherBetter: true,  fmt: v => (v > 0 ? '+' : '') + v.toFixed(1) },
+  { key: 'trb_pg',        label: 'Rebounds/G',           group: 'Rebounding', higherBetter: true,  fmt: v => v.toFixed(1) },
+  { key: 'opp_trb_pg',    label: 'Opp Rebounds/G',       group: 'Rebounding', higherBetter: false, fmt: v => v.toFixed(1) },
+
+  // ── Playmaking ─────────────────────────────────────────────────────────────
+  { key: 'ast_pg',        label: 'Assists/G',            group: 'Playmaking', higherBetter: true,  fmt: v => v.toFixed(1) },
+  { key: 'tov_pg',        label: 'Turnovers/G',          group: 'Playmaking', higherBetter: false, fmt: v => v.toFixed(1) },
+  { key: 'ast_to_ratio',  label: 'Assist / TO Ratio',    group: 'Playmaking', higherBetter: true,  fmt: v => v.toFixed(2) },
+
+  // ── Defense ────────────────────────────────────────────────────────────────
+  { key: 'stl_pg',        label: 'Steals/G',             group: 'Defense', higherBetter: true,  fmt: v => v.toFixed(1) },
+  { key: 'blk_pg',        label: 'Blocks/G',             group: 'Defense', higherBetter: true,  fmt: v => v.toFixed(1) },
+
+  // ── Pace ───────────────────────────────────────────────────────────────────
+  { key: 'tempo',         label: 'Tempo (poss/40 min)',  group: 'Pace', higherBetter: null, fmt: v => v.toFixed(1) },
 ]
 
 export const TEAM_METRIC_MAP = Object.fromEntries(TEAM_METRICS.map(m => [m.key, m]))

@@ -54,7 +54,14 @@ function CustomDot({ cx, cy, payload }) {
 
 // ── Correlation Tab ────────────────────────────────────────────────────────────
 
+// Preserves the insertion-order group sequence from constants.js
 const METRIC_GROUPS_LIST = [...new Set(TEAM_METRICS.map(m => m.group))]
+
+// Pre-grouped for <optgroup> rendering in selects
+const METRIC_BY_GROUP = METRIC_GROUPS_LIST.map(group => ({
+  group,
+  metrics: TEAM_METRICS.filter(m => m.group === group),
+}))
 
 function CorrelationPanel() {
   const { xVar, yVar, yearRange, savedInsights, setXVar, setYVar, saveInsight, removeInsight } = useInsightStore()
@@ -118,18 +125,20 @@ function CorrelationPanel() {
         {/* Metric selector with search */}
         <div style={{ ...CARD, marginBottom: 20 }}>
           <div style={{ display: 'flex', gap: 12, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 12, color: '#6b7280' }}>X →</span>
-              <select style={SEL} value={xVar} onChange={e => setXVar(e.target.value)}>
-                {TEAM_METRICS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
-              </select>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 12, color: '#6b7280' }}>Y ↑</span>
-              <select style={SEL} value={yVar} onChange={e => setYVar(e.target.value)}>
-                {TEAM_METRICS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
-              </select>
-            </div>
+            {[['X →', xVar, setXVar], ['Y ↑', yVar, setYVar]].map(([label, val, setter]) => (
+              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 12, color: '#6b7280', flexShrink: 0 }}>{label}</span>
+                <select style={{ ...SEL, minWidth: 200 }} value={val} onChange={e => setter(e.target.value)}>
+                  {METRIC_BY_GROUP.map(({ group, metrics }) => (
+                    <optgroup key={group} label={group}>
+                      {metrics.map(m => (
+                        <option key={m.key} value={m.key}>{m.label}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
+            ))}
           </div>
 
           {/* Metric browser — collapsed by default */}
@@ -712,8 +721,12 @@ function RosterBioPanel() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 12, color: '#6b7280' }}>Outcome ↑</span>
             <GlossaryTooltip metricKey={outcomeKey}>
-              <select style={SEL} value={outcomeKey} onChange={e => setOutcomeKey(e.target.value)}>
-                {TEAM_METRICS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+              <select style={{ ...SEL, minWidth: 180 }} value={outcomeKey} onChange={e => setOutcomeKey(e.target.value)}>
+                {METRIC_BY_GROUP.map(({ group, metrics }) => (
+                  <optgroup key={group} label={group}>
+                    {metrics.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+                  </optgroup>
+                ))}
               </select>
             </GlossaryTooltip>
           </div>
