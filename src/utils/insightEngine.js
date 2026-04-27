@@ -332,7 +332,9 @@ export function comparePositionProfiles(squadA, squadB, { minMin = 5 } = {}) {
   }))
 }
 
-// Updated roster aggregates using playing-time weighted averages
+// Updated roster aggregates using playing-time weighted averages.
+// Includes overall roster metrics AND position-level (Guard/Forward/Big) averages
+// so that any of these can be used as X-axis inputs in the Roster & Bio scatter.
 export function buildRosterAggregatesWeighted(players) {
   const byKey = {}
   for (const p of players) {
@@ -352,15 +354,52 @@ export function buildRosterAggregatesWeighted(players) {
     const wExp = weightedAvg(enriched, '_exp')
     const wWt  = weightedAvg(ps, 'weight_lbs')
     const n = ps.length
+    const totalMinPg = ps.reduce((s, p) => s + (p.min_pg ?? 0), 0)
+
+    const guards   = enriched.filter(p => broadPositionGroup(p.pos_type) === 'Guard')
+    const forwards = enriched.filter(p => broadPositionGroup(p.pos_type) === 'Forward')
+    const bigs     = enriched.filter(p => broadPositionGroup(p.pos_type) === 'Big')
+
+    const minShare = (group) => {
+      const mins = group.reduce((s, p) => s + (p.min_pg ?? 0), 0)
+      return totalMinPg > 0 ? +(mins / totalMinPg * 100).toFixed(1) : null
+    }
+    const pa = (group, key) => {
+      const v = weightedAvg(group, key)
+      return v != null ? +v.toFixed(2) : null
+    }
+
     return {
       school, year, n,
+      // Overall
       avg_height_in:  wHt  != null ? +wHt.toFixed(1)  : null,
       avg_weight_lbs: wWt  != null ? +wWt.toFixed(1)  : null,
       avg_experience: wExp != null ? +wExp.toFixed(2)  : null,
-      pct_guards:     +(ps.filter(p => broadPositionGroup(p.pos_type) === 'Guard').length   / n * 100).toFixed(1),
-      pct_forwards:   +(ps.filter(p => broadPositionGroup(p.pos_type) === 'Forward').length / n * 100).toFixed(1),
-      pct_bigs:       +(ps.filter(p => broadPositionGroup(p.pos_type) === 'Big').length     / n * 100).toFixed(1),
+      pct_guards:     +(guards.length   / n * 100).toFixed(1),
+      pct_forwards:   +(forwards.length / n * 100).toFixed(1),
+      pct_bigs:       +(bigs.length     / n * 100).toFixed(1),
       missing_height: enriched.filter(p => p._height_in == null).length,
+      // Guard position averages
+      guard_avg_height: pa(guards, '_height_in'),
+      guard_avg_weight: pa(guards, 'weight_lbs'),
+      guard_avg_exp:    pa(guards, '_exp'),
+      guard_avg_ortg:   pa(guards, 'ortg'),
+      guard_avg_bpm:    pa(guards, 'bpm'),
+      guard_min_share:  minShare(guards),
+      // Forward position averages
+      fwd_avg_height:   pa(forwards, '_height_in'),
+      fwd_avg_weight:   pa(forwards, 'weight_lbs'),
+      fwd_avg_exp:      pa(forwards, '_exp'),
+      fwd_avg_ortg:     pa(forwards, 'ortg'),
+      fwd_avg_bpm:      pa(forwards, 'bpm'),
+      fwd_min_share:    minShare(forwards),
+      // Big/Center position averages
+      big_avg_height:   pa(bigs, '_height_in'),
+      big_avg_weight:   pa(bigs, 'weight_lbs'),
+      big_avg_exp:      pa(bigs, '_exp'),
+      big_avg_ortg:     pa(bigs, 'ortg'),
+      big_avg_bpm:      pa(bigs, 'bpm'),
+      big_min_share:    minShare(bigs),
     }
   })
 }
@@ -525,9 +564,44 @@ export function generateMatchupInsights(seasonA, seasonB, posCompare, schemeA, s
   return insights.slice(0, 5)
 }
 
-// Strength & Conditioning training plan — entirely based on physical development
-// and NBA Draft Combine target benchmarks. Does NOT use in-game statistics.
-export function generateTrainingPlan(player) {
+// Numeric combine target ranges keyed to match NBA_COMBINE_TARGETS in PlayerLab.
+// Used by generateTrainingPlan to compute gap severities and re-prioritise modules.
+const _COMBINE_GAP_DEFS = {
+  Guard: {
+    max_vert:     { targetMin: 33.5, targetMax: 38.5, higherBetter: true,  planArea: 'Lower Body Power' },
+    no_step_vert: { targetMin: 28.0, targetMax: 33.0, higherBetter: true,  planArea: 'Lower Body Power' },
+    lane_agility: { targetMin: 10.75,targetMax: 11.3,  higherBetter: false, planArea: 'Lateral Agility & Change of Direction' },
+    sprint_34:    { targetMin: 3.10, targetMax: 3.30,  higherBetter: false, planArea: 'Linear Speed' },
+    weight:       { targetMin: 185,  targetMax: 200,   higherBetter: null,  planArea: 'Lean Mass & Strength Base' },
+    bench_reps:   { targetMin: 5,    targetMax: 12,    higherBetter: true,  planArea: 'Lean Mass & Strength Base' },
+    body_fat_pct: { targetMin: 5.0,  targetMax: 10.0,  higherBetter: false, planArea: 'Lean Mass & Strength Base' },
+  },
+  Forward: {
+    max_vert:     { targetMin: 33.5, targetMax: 38.5, higherBetter: true,  planArea: 'Lower Body Power' },
+    no_step_vert: { targetMin: 27.0, targetMax: 32.5, higherBetter: true,  planArea: 'Lower Body Power' },
+    lane_agility: { targetMin: 10.9, targetMax: 11.6,  higherBetter: false, planArea: 'Multi-Directional Agility' },
+    sprint_34:    { targetMin: 3.20, targetMax: 3.40,  higherBetter: false, planArea: 'Linear Speed' },
+    weight:       { targetMin: 210,  targetMax: 230,   higherBetter: null,  planArea: 'Upper Body Strength' },
+    bench_reps:   { targetMin: 6,    targetMax: 14,    higherBetter: true,  planArea: 'Upper Body Strength' },
+    body_fat_pct: { targetMin: 6.5,  targetMax: 11.0,  higherBetter: false, planArea: 'Upper Body Strength' },
+  },
+  Big: {
+    max_vert:     { targetMin: 29.5, targetMax: 36.0, higherBetter: true,  planArea: 'Lower Body Power' },
+    no_step_vert: { targetMin: 25.0, targetMax: 30.5, higherBetter: true,  planArea: 'Lower Body Power' },
+    lane_agility: { targetMin: 11.3, targetMax: 12.2,  higherBetter: false, planArea: 'Hip Mobility & Foot Speed' },
+    sprint_34:    { targetMin: 3.30, targetMax: 3.55,  higherBetter: false, planArea: 'Lower Body Power' },
+    weight:       { targetMin: 230,  targetMax: 260,   higherBetter: null,  planArea: 'Upper Body Strength & Mass' },
+    bench_reps:   { targetMin: 10,   targetMax: 18,    higherBetter: true,  planArea: 'Upper Body Strength & Mass' },
+    body_fat_pct: { targetMin: 7.5,  targetMax: 14.0,  higherBetter: false, planArea: 'Upper Body Strength & Mass' },
+  },
+}
+
+const _PRIORITY_RANK = { Critical: 0, High: 1, Medium: 2, Maintenance: 3 }
+
+// Strength & Conditioning training plan — position-based with optional combine-input
+// gap analysis. Pass combineInputs = { max_vert: '31', lane_agility: '11.6', ... }
+// to re-prioritise and re-order modules based on measured gaps to NBA targets.
+export function generateTrainingPlan(player, combineInputs = {}) {
   if (!player) return []
   const pos = broadPositionGroup(player.pos_type)
   if (!pos) return []
@@ -703,7 +777,61 @@ export function generateTrainingPlan(player) {
     ],
   }
 
-  return plans[pos] ?? []
+  const base = plans[pos] ?? []
+
+  // No inputs — return static plan unchanged
+  if (Object.keys(combineInputs).length === 0) return base
+
+  // Compute worst gap per plan area from the entered combine values
+  const posGapDefs = _COMBINE_GAP_DEFS[pos] ?? {}
+  const areaGap = {}
+  for (const [key, rawVal] of Object.entries(combineInputs)) {
+    if (rawVal === '' || rawVal == null) continue
+    const v = parseFloat(rawVal)
+    if (isNaN(v)) continue
+    const def = posGapDefs[key]
+    if (!def) continue
+    const range = def.targetMax - def.targetMin
+    if (range === 0) continue
+    let severity = 0
+    if (def.higherBetter === true) {
+      if (v < def.targetMin)      severity = (def.targetMin - v) / range
+      else if (v > def.targetMax) severity = -(v - def.targetMax) / range
+    } else if (def.higherBetter === false) {
+      if (v > def.targetMax)      severity = (v - def.targetMax) / range
+      else if (v < def.targetMin) severity = -(def.targetMin - v) / range
+    }
+    if (areaGap[def.planArea] == null || severity > areaGap[def.planArea].severity) {
+      areaGap[def.planArea] = { severity, metric: key, value: v }
+    }
+  }
+
+  return base.map(rec => {
+    const gap = areaGap[rec.area]
+    let effectivePriority = rec.priority
+    let gapNote = null
+    const gapSeverity = gap?.severity ?? 0
+    if (gap != null) {
+      if (gap.severity > 1.5) {
+        effectivePriority = 'Critical'
+        gapNote = 'Significantly below combine target — highest priority'
+      } else if (gap.severity > 0.5) {
+        if ((_PRIORITY_RANK[effectivePriority] ?? 4) > _PRIORITY_RANK.High) effectivePriority = 'High'
+        gapNote = 'Below combine target — focus area'
+      } else if (gap.severity > 0.05) {
+        gapNote = 'Approaching combine target — keep pushing'
+      } else if (gap.severity < -0.3) {
+        if (effectivePriority === 'High') effectivePriority = 'Medium'
+        gapNote = 'Above combine target — maintain and redistribute effort'
+      }
+    }
+    return { ...rec, effectivePriority, gapNote, gapSeverity }
+  }).sort((a, b) => {
+    const ra = _PRIORITY_RANK[a.effectivePriority] ?? 4
+    const rb = _PRIORITY_RANK[b.effectivePriority] ?? 4
+    if (ra !== rb) return ra - rb
+    return (b.gapSeverity ?? 0) - (a.gapSeverity ?? 0)
+  })
 }
 
 // ── NBA Prospect Comparison ───────────────────────────────────────────────────
@@ -1018,5 +1146,98 @@ export function computePositionPhysicalImpact(games, allPlayers) {
       fwdWeight:   +corr('fwdWtDiff').toFixed(3),
       bigWeight:   +corr('bigWtDiff').toFixed(3),
     },
+  }
+}
+
+// ── Game Matchup Dataset ──────────────────────────────────────────────────────
+// Returns one row per unique Ivy-vs-Ivy game (school < opp_school to avoid
+// double-counting), with position-level physical differentials and game outcomes.
+// Used as the X-axis data source for the "Game Matchup" mode in Roster & Bio.
+export function buildGameMatchupDataset(games, allPlayers) {
+  const aggCache = {}
+  const getAgg = (school, year) => {
+    const k = `${school}|${year}`
+    if (!aggCache[k]) {
+      const squad = allPlayers.filter(p => p.school === school && p.year === year && p.min_pg >= 5)
+      aggCache[k] = buildPositionWeightedAggregates(squad)
+    }
+    return aggCache[k]
+  }
+
+  const rosterCache = {}
+  const getRoster = (school, year) => {
+    const k = `${school}|${year}`
+    if (!rosterCache[k]) {
+      const ps = allPlayers.filter(p => p.school === school && p.year === year && p.min_pg >= 6)
+      const enriched = ps.map(p => ({ ...p, _height_in: parseHeightIn(p.height), _exp: classYearNum(p.class_yr) }))
+      rosterCache[k] = {
+        avg_height: weightedAvg(enriched, '_height_in'),
+        avg_weight: weightedAvg(ps, 'weight_lbs'),
+        avg_exp:    weightedAvg(enriched, '_exp'),
+      }
+    }
+    return rosterCache[k]
+  }
+
+  const rows = []
+  for (const game of games) {
+    if (!game.ivy_game || game.pts_for == null || game.school >= game.opp_school) continue
+    const aggA = getAgg(game.school,     game.year)
+    const aggB = getAgg(game.opp_school, game.year)
+    const rA   = getRoster(game.school,     game.year)
+    const rB   = getRoster(game.opp_school, game.year)
+
+    const diff = (pos, key) => {
+      const a = aggA[pos]?.[key], b = aggB[pos]?.[key]
+      return (a != null && b != null) ? +(a - b).toFixed(2) : null
+    }
+    const rdiff = (key) => (rA[key] != null && rB[key] != null) ? +(rA[key] - rB[key]).toFixed(2) : null
+
+    rows.push({
+      school:      game.school,
+      opp_school:  game.opp_school,
+      year:        game.year,
+      pts_diff:    game.pts_for - game.pts_against,
+      win:         game.win ? 1 : 0,
+      // Overall differentials
+      overall_ht_diff:  rdiff('avg_height'),
+      overall_wt_diff:  rdiff('avg_weight'),
+      overall_exp_diff: rdiff('avg_exp'),
+      // Guard differentials
+      guard_ht_diff:    diff('Guard',   'avgHeightIn'),
+      guard_wt_diff:    diff('Guard',   'avgWeightLbs'),
+      guard_exp_diff:   diff('Guard',   'avgExperience'),
+      guard_ortg_diff:  diff('Guard',   'avgOrtg'),
+      guard_bpm_diff:   diff('Guard',   'avgBpm'),
+      // Forward differentials
+      fwd_ht_diff:      diff('Forward', 'avgHeightIn'),
+      fwd_wt_diff:      diff('Forward', 'avgWeightLbs'),
+      fwd_exp_diff:     diff('Forward', 'avgExperience'),
+      fwd_ortg_diff:    diff('Forward', 'avgOrtg'),
+      fwd_bpm_diff:     diff('Forward', 'avgBpm'),
+      // Big/Center differentials
+      big_ht_diff:      diff('Big',     'avgHeightIn'),
+      big_wt_diff:      diff('Big',     'avgWeightLbs'),
+      big_exp_diff:     diff('Big',     'avgExperience'),
+      big_ortg_diff:    diff('Big',     'avgOrtg'),
+      big_bpm_diff:     diff('Big',     'avgBpm'),
+    })
+  }
+  return rows
+}
+
+// Pearson correlation + scatter points for a game-matchup-level dataset.
+// Mirrors computeRelationship() but operates on buildGameMatchupDataset() output.
+export function computeGameMatchupRelationship(gameMatchups, xKey, yKey) {
+  const rows = gameMatchups.filter(g => g[xKey] != null && g[yKey] != null)
+  const xs = rows.map(r => r[xKey])
+  const ys = rows.map(r => r[yKey])
+  return {
+    points: rows.map(r => ({
+      x: r[xKey], y: r[yKey],
+      school: r.school, opp_school: r.opp_school, year: r.year,
+    })),
+    correlation: rows.length >= 4 ? parseFloat(pearsonCorrelation(xs, ys).toFixed(3)) : 0,
+    n: rows.length,
   }
 }

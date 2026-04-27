@@ -8,6 +8,7 @@ import TeamBadge from '../components/shared/TeamBadge.jsx'
 import StatCard from '../components/shared/StatCard.jsx'
 import PageHeader from '../components/shared/PageHeader.jsx'
 import Accordion from '../components/shared/Accordion.jsx'
+import PageConclusions from '../components/shared/PageConclusions.jsx'
 import { T } from '../styles/theme.js'
 import { getCoach } from '../data/coachMeta.js'
 import {
@@ -15,9 +16,7 @@ import {
   comparePositionProfiles, generateMatchupInsights, generatePlayerRoleSummary,
   parseHeightIn, buildPositionWeightedAggregates, dataQualityCheck,
   classifySchemeFromRoster, computeTeamArchetype,
-  computePositionPhysicalImpact,
 } from '../utils/insightEngine.js'
-import games   from '../data/games.json'
 
 const SEL = { background: '#1a1a1a', border: '1px solid #2c2c2c', color: '#ebebeb', borderRadius: 6, padding: '6px 10px', fontSize: 13 }
 const CARD = { background: '#111111', border: '1px solid #2c2c2c', borderRadius: 12, padding: '20px 24px' }
@@ -48,7 +47,6 @@ const FOUR_FACTORS = [
   { key: 'ftr_d', label: 'FT Rate (Def)', higherBetter: false, fmt: v => v.toFixed(1) },
 ]
 
-const physImpact = computePositionPhysicalImpact(games, players)
 
 function predictWinPct(adjoeA, adjdeA, adjoeB, adjdeB) {
   const diff = (adjoeA - adjdeA) - (adjoeB - adjdeB)
@@ -176,10 +174,80 @@ export default function MatchupAnalyzer() {
 
   const crossYear = analyzerYearA !== analyzerYearB
 
-  // Win probability KPI stat for header
+  // Win probability KPI stat for header (declared before conclusions so it can be used inside)
   const winPctStr   = winPctA !== null ? (winPctA * 100).toFixed(0) + '%' : null
   const netA        = seasonA ? ((seasonA.adjoe - seasonA.adjde) > 0 ? '+' : '') + (seasonA.adjoe - seasonA.adjde).toFixed(1) : null
   const netB        = seasonB ? ((seasonB.adjoe - seasonB.adjde) > 0 ? '+' : '') + (seasonB.adjoe - seasonB.adjde).toFixed(1) : null
+
+  const conclusions = useMemo(() => {
+    if (!seasonA || !seasonB) return []
+    const items = []
+
+    // Win probability
+    if (winPctA !== null) {
+      const fav = winPctA >= 0.5 ? metaA.abbr : metaB.abbr
+      const favPct = (Math.max(winPctA, 1 - winPctA) * 100).toFixed(0)
+      const netDiff = Math.abs((seasonA.adjoe - seasonA.adjde) - (seasonB.adjoe - seasonB.adjde)).toFixed(1)
+      items.push({
+        label: 'Win Prob.',
+        text: `${fav} projected at ${favPct}% — gap driven by a ${netDiff}-pt net efficiency differential (${metaA.abbr}: ${netA}, ${metaB.abbr}: ${netB}).`,
+        color: winPctA >= 0.5 ? colorA : colorB,
+      })
+    }
+
+    // Tempo battle
+    const tempoDiff = (seasonA.tempo ?? 0) - (seasonB.tempo ?? 0)
+    if (Math.abs(tempoDiff) >= 2) {
+      const faster = tempoDiff > 0 ? metaA.abbr : metaB.abbr
+      const slower = tempoDiff > 0 ? metaB.abbr : metaA.abbr
+      items.push({
+        label: 'Pace',
+        text: `${faster} plays ${Math.abs(tempoDiff).toFixed(1)} possessions/40 faster. ${faster} wants transition, open-floor spacing, and early offense. ${slower} must force half-court sets and avoid live-ball turnovers.`,
+        color: T.cyan,
+      })
+    }
+
+    // Shooting edge
+    const efgEdge  = (seasonA.efg_o ?? 0) - (seasonB.efg_d ?? 0)
+    const efgEdgeB = (seasonB.efg_o ?? 0) - (seasonA.efg_d ?? 0)
+    const maxEdge  = Math.abs(efgEdge) >= Math.abs(efgEdgeB) ? efgEdge : -efgEdgeB
+    if (Math.abs(maxEdge) > 1.5) {
+      const shooter = maxEdge > 0 ? metaA.abbr : metaB.abbr
+      items.push({
+        label: 'Shooting',
+        text: maxEdge > 0
+          ? `${shooter} shoots ${Math.abs(maxEdge).toFixed(1)} eFG pts above what the opponent's defense allows — expect efficient half-court possessions.`
+          : `Defensive resistance limits ${shooter} — shooting volume attack and free-throw generation will be key to manufacturing points.`,
+        color: maxEdge > 0 ? T.green : T.amber,
+      })
+    }
+
+    // Scheme clash
+    items.push({
+      label: 'Schemes',
+      text: `${metaA.abbr} runs ${schemeOffA} offensively and ${schemeDefA} defensively. ${metaB.abbr} counters with ${schemeOffB} / ${schemeDefB}. Expect ${schemeOffA.includes('Transition') || schemeOffA.includes('Run') ? 'up-tempo pressure from ' + metaA.abbr : 'controlled half-court execution from ' + metaA.abbr}.`,
+      color: T.amber,
+    })
+
+    // Strongest position edge
+    const edgeRows = posCompare
+      .filter(r => r.diffHeightIn != null)
+      .sort((a, b) => Math.abs(b.diffHeightIn) - Math.abs(a.diffHeightIn))
+    if (edgeRows.length && Math.abs(edgeRows[0].diffHeightIn) >= 1) {
+      const r = edgeRows[0]
+      const taller = r.diffHeightIn > 0 ? metaA.abbr : metaB.abbr
+      const ortgNote = r.diffOrtg != null && Math.abs(r.diffOrtg) >= 3
+        ? ` ORTG advantage: ${r.diffOrtg > 0 ? metaA.abbr : metaB.abbr} by ${Math.abs(r.diffOrtg).toFixed(0)} pts/100.`
+        : ''
+      items.push({
+        label: r.position + ' Edge',
+        text: `${taller}'s ${r.position.toLowerCase()}s are ${Math.abs(r.diffHeightIn).toFixed(1)}" taller on average.${ortgNote} This favors ${taller} in ${r.position === 'Big' ? 'interior play, rebounding, and shot contesting' : 'ball-screen execution and perimeter switching scenarios'}.`,
+        color: r.diffHeightIn > 0 ? colorA : colorB,
+      })
+    }
+
+    return items
+  }, [seasonA, seasonB, winPctA, metaA, metaB, netA, netB, schemeOffA, schemeOffB, schemeDefA, schemeDefB, posCompare, colorA, colorB])
 
   return (
     <div style={{ background: T.bg, minHeight: '100vh' }}>
@@ -226,7 +294,7 @@ export default function MatchupAnalyzer() {
 
       {/* Section nav */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 20, flexWrap: 'wrap' }}>
-        {[['overview','Overview'], ['physical','Physical Matchup'], ['positions','Position Breakdown'], ['roster','Depth & Roster'], ['insights','Practice Insights']].map(([v, lbl]) => (
+        {[['overview','Overview'], ['positions','Position Breakdown'], ['roster','Depth & Roster'], ['insights','Practice Insights']].map(([v, lbl]) => (
           <button key={v} onClick={() => setActiveSection(v)}
             style={{ padding: '6px 14px', borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: 'pointer', border: 'none',
               background: activeSection === v ? '#4f46e5' : '#2c2c2c',
@@ -340,8 +408,8 @@ export default function MatchupAnalyzer() {
         </div>
       )}
 
-      {/* ── Physical Matchup ── */}
-      {activeSection === 'physical' && (
+      {/* ── Position Breakdown (physical section removed — use Position Breakdown tab) ── */}
+      {activeSection === 'physical_removed' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           <div style={CARD}>
             <div style={SECTION_TITLE}>Position-Level Physical Comparison</div>
@@ -476,57 +544,6 @@ export default function MatchupAnalyzer() {
             })}
           </div>
 
-          {/* Regression-weighted advantage */}
-          {physImpact && (() => {
-            const c = physImpact.coefficients
-            const score = (pos, htKey, wtKey) => {
-              const htDiff = (posAggA[pos]?.avgHeightIn  ?? 0) - (posAggB[pos]?.avgHeightIn  ?? 0)
-              const wtDiff = (posAggA[pos]?.avgWeightLbs ?? 0) - (posAggB[pos]?.avgWeightLbs ?? 0)
-              return htDiff * c[htKey] + wtDiff * c[wtKey]
-            }
-            const gScore = score('Guard',   'guardHeight', 'guardWeight')
-            const fScore = score('Forward', 'fwdHeight',   'fwdWeight')
-            const bScore = score('Big',     'bigHeight',   'bigWeight')
-            const total  = gScore + fScore + bScore
-            const absMax = Math.max(Math.abs(gScore), Math.abs(fScore), Math.abs(bScore), 0.01)
-            return (
-              <div style={{ ...CARD, marginBottom: 20 }}>
-                <div style={{ ...SECTION_TITLE, marginBottom: 4 }}>Regression-Weighted Physical Edge ({metaA.abbr})</div>
-                <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 14 }}>
-                  Estimated pts advantage from physical differentials · R²={physImpact.r2} · n={physImpact.n} Ivy matchups
-                </div>
-                {[
-                  { label: 'Guard',   score: gScore },
-                  { label: 'Forward', score: fScore },
-                  { label: 'Big/C',   score: bScore },
-                ].map(({ label, score: s }) => {
-                  const barW = Math.min(Math.abs(s) / absMax * 80, 80)
-                  const col  = s > 0.3 ? colorA : s < -0.3 ? colorB : '#6b7280'
-                  return (
-                    <div key={label} style={{ marginBottom: 10 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                        <span style={{ fontSize: 12, color: '#9ca3af' }}>{label}</span>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: col }}>
-                          {s > 0 ? '+' : ''}{s.toFixed(2)} pts
-                        </span>
-                      </div>
-                      <div style={{ background: '#2c2c2c', borderRadius: 3, height: 7, position: 'relative', overflow: 'hidden' }}>
-                        <div style={{ position: 'absolute', [s >= 0 ? 'left' : 'right']: '50%', width: barW + '%', height: '100%', background: col, opacity: 0.7 }} />
-                        <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: '#374151' }} />
-                      </div>
-                    </div>
-                  )
-                })}
-                <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #2c2c2c', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 12, color: '#6b7280' }}>Total physical edge:</span>
-                  <span style={{ fontSize: 16, fontWeight: 800, color: total > 0.5 ? colorA : total < -0.5 ? colorB : '#6b7280' }}>
-                    {total > 0 ? '+' : ''}{total.toFixed(2)} pts
-                  </span>
-                  <span style={{ fontSize: 11, color: '#4b5563' }}>for {metaA.abbr}</span>
-                </div>
-              </div>
-            )
-          })()}
 
           {/* Diff table */}
           <div style={CARD}>
@@ -654,6 +671,7 @@ export default function MatchupAnalyzer() {
         </div>
       )}
 
+        <PageConclusions title="Matchup Conclusions" conclusions={conclusions} />
       </div>{/* end inner padding wrapper */}
     </div>
   )

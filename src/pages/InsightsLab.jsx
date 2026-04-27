@@ -11,14 +11,16 @@ import useInsightStore from '../store/useInsightStore.js'
 import GlossaryTooltip from '../components/shared/GlossaryTooltip.jsx'
 import PageHeader from '../components/shared/PageHeader.jsx'
 import Accordion from '../components/shared/Accordion.jsx'
+import PageConclusions from '../components/shared/PageConclusions.jsx'
 import { T } from '../styles/theme.js'
 import {
   computeRelationship, scoreInsight, timeWindowComparison,
   detectThreshold, generateInsightText, linearRegression, detectStyleInteractions,
   schemeBreakdown, computeBiodataRelationship,
-  buildRosterAggregatesWeighted, buildPhysicalMatchupPairs, pearsonCorrelation,
+  buildRosterAggregatesWeighted, pearsonCorrelation,
   classifySchemeFromRoster, computeTeamArchetype, ARCHETYPES,
   computeArchetypeMatchupMatrix, computePositionPhysicalImpact,
+  buildGameMatchupDataset, computeGameMatchupRelationship,
 } from '../utils/insightEngine.js'
 import games from '../data/games.json'
 import { getCoach } from '../data/coachMeta.js'
@@ -70,16 +72,16 @@ function CorrelationPanel() {
   const [searchTerm, setSearchTerm] = useState('')
 
   const { points, correlation, n } = useMemo(() =>
-    computeRelationship(teamSeasons, xVar, yVar, { yearRange })
+    computeRelationship(enrichedSeasons, xVar, yVar, { yearRange })
   , [xVar, yVar, yearRange])
 
   const { valid, confidence, reason } = useMemo(() => scoreInsight(correlation, n), [correlation, n])
-  const threshold       = useMemo(() => detectThreshold(teamSeasons, xVar, yVar, yearRange), [xVar, yVar, yearRange])
-  const windows         = useMemo(() => timeWindowComparison(teamSeasons, xVar, yVar), [xVar, yVar])
-  const styleInteractions = useMemo(() => detectStyleInteractions(teamSeasons, xVar, yVar, styleKey), [xVar, yVar, styleKey])
+  const threshold         = useMemo(() => detectThreshold(enrichedSeasons, xVar, yVar, yearRange), [xVar, yVar, yearRange])
+  const windows           = useMemo(() => timeWindowComparison(enrichedSeasons, xVar, yVar), [xVar, yVar])
+  const styleInteractions = useMemo(() => detectStyleInteractions(enrichedSeasons, xVar, yVar, styleKey), [xVar, yVar, styleKey])
 
-  const xMeta = TEAM_METRICS.find(m => m.key === xVar)
-  const yMeta = TEAM_METRICS.find(m => m.key === yVar)
+  const xMeta = ALL_METRICS_FLAT.find(m => m.key === xVar)
+  const yMeta = ALL_METRICS_FLAT.find(m => m.key === yVar)
   const insightText = useMemo(() =>
     generateInsightText(xMeta?.label ?? xVar, yMeta?.label ?? yVar, correlation, n, threshold)
   , [xMeta, yMeta, correlation, n, threshold])
@@ -102,10 +104,10 @@ function CorrelationPanel() {
 
   const filteredGroups = useMemo(() => {
     const q = searchTerm.toLowerCase()
-    return METRIC_GROUPS_LIST.map(group => ({
+    return EXTENDED_METRIC_GROUPS.map(({ group, metrics }) => ({
       group,
-      metrics: TEAM_METRICS.filter(m => m.group === group &&
-        (q === '' || m.label.toLowerCase().includes(q) || m.key.includes(q)))
+      metrics: metrics.filter(m =>
+        q === '' || m.label.toLowerCase().includes(q) || m.key.includes(q))
     })).filter(g => g.metrics.length > 0)
   }, [searchTerm])
 
@@ -121,16 +123,17 @@ function CorrelationPanel() {
   }
 
   return (
+    <>
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 28 }}>
       <div>
-        {/* Metric selector with search */}
+        {/* Metric selector + Save button */}
         <div style={{ ...CARD, marginBottom: 20 }}>
           <div style={{ display: 'flex', gap: 12, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
             {[['X →', xVar, setXVar], ['Y ↑', yVar, setYVar]].map(([label, val, setter]) => (
               <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontSize: 12, color: '#6b7280', flexShrink: 0 }}>{label}</span>
                 <select style={{ ...SEL, minWidth: 200 }} value={val} onChange={e => setter(e.target.value)}>
-                  {METRIC_BY_GROUP.map(({ group, metrics }) => (
+                  {EXTENDED_METRIC_GROUPS.map(({ group, metrics }) => (
                     <optgroup key={group} label={group}>
                       {metrics.map(m => (
                         <option key={m.key} value={m.key}>{m.label}</option>
@@ -140,10 +143,15 @@ function CorrelationPanel() {
                 </select>
               </div>
             ))}
+            <button
+              style={{ ...BTN(valid), padding: '6px 16px', fontSize: 12, opacity: valid ? 1 : 0.4, cursor: valid ? 'pointer' : 'not-allowed', marginLeft: 'auto' }}
+              onClick={handleSave} disabled={!valid}>
+              Save Insight
+            </button>
           </div>
 
           {/* Metric browser — collapsed by default */}
-          <Accordion title="Browse all metrics" badge={`${TEAM_METRICS.length} metrics`}>
+          <Accordion title="Browse all metrics" badge={`${ALL_METRICS_FLAT.length} metrics`}>
             <input
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
@@ -181,7 +189,7 @@ function CorrelationPanel() {
             {threshold && <span style={{ fontSize: 11, color: '#f59e0b' }}>— threshold split</span>}
           </div>
           <ResponsiveContainer width="100%" height={320}>
-            <ComposedChart margin={{ top: 8, right: 16, bottom: 28, left: 8 }}>
+            <ComposedChart margin={{ top: threshold ? 28 : 8, right: 16, bottom: 28, left: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#2c2c2c" />
               <XAxis dataKey="x" type="number" scale="linear" domain={['auto', 'auto']}
                 tick={{ fill: '#6b7280', fontSize: 11 }}
@@ -256,12 +264,6 @@ function CorrelationPanel() {
           </div>
         </div>
 
-        <div style={{ marginTop: 16 }}>
-          <button style={{ ...BTN(valid), padding: '8px 20px', fontSize: 13, opacity: valid ? 1 : 0.5, cursor: valid ? 'pointer' : 'not-allowed' }}
-            onClick={handleSave} disabled={!valid}>
-            Save Insight
-          </button>
-        </div>
       </div>
 
       <div>
@@ -290,6 +292,28 @@ function CorrelationPanel() {
         )}
       </div>
     </div>
+    <PageConclusions title="Correlation Takeaways" conclusions={[
+      valid ? {
+        label: 'Relationship',
+        text: insightText,
+        color: confidence === 'HIGH' ? '#10b981' : confidence === 'MEDIUM' ? '#f59e0b' : '#6b7280',
+      } : {
+        label: 'No Signal',
+        text: `${xMeta?.label ?? xVar} → ${yMeta?.label ?? yVar}: ${reason ?? 'correlation too weak to interpret (|r| < 0.20 or n < 6).'}`,
+        color: '#6b7280',
+      },
+      threshold ? {
+        label: 'Threshold',
+        text: `Teams with ${xMeta?.label ?? xVar} above ${threshold.threshold} average ${(threshold.aboveMean * (yMeta?.key?.includes('pct') || yMeta?.key === 'win_pct' ? 100 : 1)).toFixed(1)} vs ${(threshold.belowMean * (yMeta?.key?.includes('pct') || yMeta?.key === 'win_pct' ? 100 : 1)).toFixed(1)} below — a ${threshold.effect.toFixed(2)}-unit split effect.`,
+        color: '#f59e0b',
+      } : null,
+      windows.length === 2 && windows[0].r != null && windows[1].r != null ? {
+        label: 'Stability',
+        text: `r = ${windows[0].r.toFixed(2)} in ${windows[0].label} vs ${windows[1].r.toFixed(2)} in ${windows[1].label} — ${Math.abs(windows[0].r - windows[1].r) < 0.15 ? 'relationship is stable across eras' : 'pattern has shifted — recent seasons may tell a different story'}.`,
+        color: '#a5b4fc',
+      } : null,
+    ].filter(Boolean)} />
+    </>
   )
 }
 
@@ -649,31 +673,156 @@ function SavedSchemes() {
 
 function SchemePanel() {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
-      <SchemeClassifierPanel />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+
+      {/* ── Section 1: Team Roster Analysis ── */}
+      <div style={{ marginBottom: 28 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: T.textMin, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            Team Roster Analysis
+          </div>
+          <div style={{ flex: 1, height: 1, background: T.border }} />
+        </div>
+        <SchemeClassifierPanel />
+        <SavedSchemes />
+      </div>
+
+      {/* ── Divider ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 28 }}>
+        <div style={{ flex: 1, height: 1, background: T.border }} />
+        <div style={{ fontSize: 11, fontWeight: 700, color: T.textMin, textTransform: 'uppercase', letterSpacing: '0.08em', whiteSpace: 'nowrap' }}>
+          League-Wide Analysis
+        </div>
+        <div style={{ flex: 1, height: 1, background: T.border }} />
+      </div>
+
+      {/* ── Section 2: League Scheme Overview ── */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32 }}>
         <SchemeHalf title="Offensive Schemes" schemeType="off" metrics={OFF_METRICS} defaultMetric="win_pct" colors={OFF_COLORS} descriptions={OFF_DESCRIPTIONS} />
         <SchemeHalf title="Defensive Schemes" schemeType="def" metrics={DEF_METRICS} defaultMetric="adjde"   colors={DEF_COLORS} descriptions={DEF_DESCRIPTIONS} />
       </div>
-      <SavedSchemes />
+
+      <PageConclusions title="Scheme Takeaways" conclusions={(() => {
+        const offData = schemeBreakdown(teamSeasons, 'off', 'win_pct').sort((a, b) => (b.avgWinPct ?? 0) - (a.avgWinPct ?? 0))
+        const defData = schemeBreakdown(teamSeasons, 'def', 'win_pct').sort((a, b) => (b.avgWinPct ?? 0) - (a.avgWinPct ?? 0))
+        return [
+          offData[0] ? {
+            label: 'Best Off. Style',
+            text: `${offData[0].scheme} teams post the highest Ivy win rate (${(offData[0].avgWinPct * 100).toFixed(0)}%, n=${offData[0].n}), ${offData[offData.length-1].scheme} teams the lowest (${(offData[offData.length-1].avgWinPct * 100).toFixed(0)}%). Scheme alone explains meaningful win-rate variance.`,
+            color: '#f59e0b',
+          } : null,
+          defData[0] ? {
+            label: 'Best Def. Style',
+            text: `${defData[0].scheme} defenses average the best win rate (${(defData[0].avgWinPct * 100).toFixed(0)}%, n=${defData[0].n}). ${defData[defData.length-1].scheme} teams struggle most (${(defData[defData.length-1].avgWinPct * 100).toFixed(0)}%) — likely a talent correlate, not solely a scheme effect.`,
+            color: '#a5b4fc',
+          } : null,
+          {
+            label: 'Context',
+            text: 'Scheme classification uses season-level tempo, 3-pt rate, TOV%, block%, and eFG% allowed. Individual team snapshots use the Roster Classifier above for a roster-composition view.',
+            color: '#6b7280',
+          },
+        ].filter(Boolean)
+      })()} />
+
     </div>
   )
 }
 
-// ── Biodata Tab ───────────────────────────────────────────────────────────────
+// ── Roster & Bio Tab ─────────────────────────────────────────────────────────
 
-const BIODATA_TEAM_METRICS = [
-  { key: 'avg_height_in',  label: 'Avg Roster Height (in)' },
-  { key: 'avg_weight_lbs', label: 'Avg Roster Weight (lbs)' },
-  { key: 'avg_experience', label: 'Avg Experience (yr)' },
-  { key: 'pct_guards',     label: '% Guards' },
-  { key: 'pct_forwards',   label: '% Forwards' },
-  { key: 'pct_bigs',       label: '% Bigs/Centers' },
+const ROSTER_METRIC_GROUPS = [
+  { group: 'Overall Roster', metrics: [
+    { key: 'avg_height_in',  label: 'Avg Height (in)' },
+    { key: 'avg_weight_lbs', label: 'Avg Weight (lbs)' },
+    { key: 'avg_experience', label: 'Avg Experience' },
+    { key: 'pct_guards',     label: '% Guard Minutes' },
+    { key: 'pct_forwards',   label: '% Forward Minutes' },
+    { key: 'pct_bigs',       label: '% Big Minutes' },
+  ]},
+  { group: 'Guards', metrics: [
+    { key: 'guard_avg_height', label: 'Guard Avg Height (in)' },
+    { key: 'guard_avg_weight', label: 'Guard Avg Weight (lbs)' },
+    { key: 'guard_avg_exp',    label: 'Guard Avg Experience' },
+    { key: 'guard_avg_ortg',   label: 'Guard Avg ORTG' },
+    { key: 'guard_avg_bpm',    label: 'Guard Avg BPM' },
+    { key: 'guard_min_share',  label: 'Guard Min Share (%)' },
+  ]},
+  { group: 'Forwards', metrics: [
+    { key: 'fwd_avg_height', label: 'Forward Avg Height (in)' },
+    { key: 'fwd_avg_weight', label: 'Forward Avg Weight (lbs)' },
+    { key: 'fwd_avg_exp',    label: 'Forward Avg Experience' },
+    { key: 'fwd_avg_ortg',   label: 'Forward Avg ORTG' },
+    { key: 'fwd_avg_bpm',    label: 'Forward Avg BPM' },
+    { key: 'fwd_min_share',  label: 'Forward Min Share (%)' },
+  ]},
+  { group: 'Bigs / Centers', metrics: [
+    { key: 'big_avg_height', label: 'Big Avg Height (in)' },
+    { key: 'big_avg_weight', label: 'Big Avg Weight (lbs)' },
+    { key: 'big_avg_exp',    label: 'Big Avg Experience' },
+    { key: 'big_avg_ortg',   label: 'Big Avg ORTG' },
+    { key: 'big_avg_bpm',    label: 'Big Avg BPM' },
+    { key: 'big_min_share',  label: 'Big Min Share (%)' },
+  ]},
 ]
 
-const rosterAggsWeighted       = buildRosterAggregatesWeighted(players)
-const archetypeMatchupData     = computeArchetypeMatchupMatrix(teamSeasons, players, games)
-const positionPhysicalImpact   = computePositionPhysicalImpact(games, players)
+const MATCHUP_X_GROUPS = [
+  { group: 'Overall Differential', metrics: [
+    { key: 'overall_ht_diff',  label: 'Overall Height Diff (in)' },
+    { key: 'overall_wt_diff',  label: 'Overall Weight Diff (lbs)' },
+    { key: 'overall_exp_diff', label: 'Overall Experience Diff' },
+  ]},
+  { group: 'Guard Differential', metrics: [
+    { key: 'guard_ht_diff',   label: 'Guard Height Diff (in)' },
+    { key: 'guard_wt_diff',   label: 'Guard Weight Diff (lbs)' },
+    { key: 'guard_exp_diff',  label: 'Guard Experience Diff' },
+    { key: 'guard_ortg_diff', label: 'Guard ORTG Diff' },
+    { key: 'guard_bpm_diff',  label: 'Guard BPM Diff' },
+  ]},
+  { group: 'Forward Differential', metrics: [
+    { key: 'fwd_ht_diff',   label: 'Forward Height Diff (in)' },
+    { key: 'fwd_wt_diff',   label: 'Forward Weight Diff (lbs)' },
+    { key: 'fwd_exp_diff',  label: 'Forward Experience Diff' },
+    { key: 'fwd_ortg_diff', label: 'Forward ORTG Diff' },
+    { key: 'fwd_bpm_diff',  label: 'Forward BPM Diff' },
+  ]},
+  { group: 'Big/Center Differential', metrics: [
+    { key: 'big_ht_diff',   label: 'Big Height Diff (in)' },
+    { key: 'big_wt_diff',   label: 'Big Weight Diff (lbs)' },
+    { key: 'big_exp_diff',  label: 'Big Experience Diff' },
+    { key: 'big_ortg_diff', label: 'Big ORTG Diff' },
+    { key: 'big_bpm_diff',  label: 'Big BPM Diff' },
+  ]},
+]
+
+const MATCHUP_Y_METRICS = [
+  { key: 'pts_diff', label: 'Point Differential' },
+  { key: 'win',      label: 'Win (1 = win, 0 = loss)' },
+]
+
+const rosterAggsWeighted     = buildRosterAggregatesWeighted(players)
+const archetypeMatchupData   = computeArchetypeMatchupMatrix(teamSeasons, players, games)
+const positionPhysicalImpact = computePositionPhysicalImpact(games, players)
+const gameMatchupDataset     = buildGameMatchupDataset(games, players)
+
+// teamSeasons enriched with position-level roster agg fields so the Correlation
+// tab can scatter guard/forward/big averages against any team outcome.
+const enrichedSeasons = (() => {
+  const aggMap = {}
+  for (const a of rosterAggsWeighted) aggMap[`${a.school}||${a.year}`] = a
+  return teamSeasons.map(s => ({ ...(aggMap[`${s.school}||${s.year}`] ?? {}), ...s }))
+})()
+
+// Flat list of all metrics available in the Correlation tab (team + roster).
+const ALL_METRICS_FLAT = [
+  ...TEAM_METRICS,
+  ...ROSTER_METRIC_GROUPS.flatMap(g => g.metrics),
+]
+
+// All optgroups for the X/Y dropdowns in the Correlation tab.
+const EXTENDED_METRIC_GROUPS = [
+  ...METRIC_BY_GROUP,
+  ...ROSTER_METRIC_GROUPS,
+]
 
 function ScatterBlock({ points, regressionLine, correlation, n, confidence, xLabel, yLabel, tooltipExtra }) {
   const coloredPoints = points.map(p => ({ ...p, fill: SCHOOL_COLORS[p.school] ?? '#6366f1' }))
@@ -724,364 +873,170 @@ function ScatterBlock({ points, regressionLine, correlation, n, confidence, xLab
 const TBL_HDR  = { padding: '7px 10px', fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #2c2c2c', background: '#0c0c0c' }
 const TBL_CELL = { padding: '7px 10px', fontSize: 12, borderBottom: '1px solid #1a1a1a' }
 
-// ── Roster & Bio Panel ────────────────────────────────────────────────────────
+// ── Roster & Bio Panel (unified scatter) ──────────────────────────────────────
+
+function makeRegLine(points) {
+  if (points.length < 3) return []
+  const { slope, intercept } = linearRegression(points)
+  const xs = points.map(p => p.x)
+  const xMin = Math.min(...xs), xMax = Math.max(...xs)
+  const pad = (xMax - xMin) * 0.05
+  return [
+    { x: xMin - pad, y: slope * (xMin - pad) + intercept },
+    { x: xMax + pad, y: slope * (xMax + pad) + intercept },
+  ]
+}
 
 function RosterBioPanel() {
   const { saveRosterFinding, removeRosterFinding, savedRosterFindings } = useInsightStore()
-  const [biodataKey, setBiodataKey] = useState('avg_height_in')
-  const [outcomeKey, setOutcomeKey] = useState('win_pct')
-  const [physYear,   setPhysYear]   = useState(0)   // 0 = all years
+  const [matchupXVar, setMatchupXVar] = useState('guard_ht_diff')
+  const [matchupYVar, setMatchupYVar] = useState('pts_diff')
 
-  const teamBio = useMemo(() =>
-    computeBiodataRelationship(rosterAggsWeighted, teamSeasons, biodataKey, outcomeKey)
-  , [biodataKey, outcomeKey])
+  const matchupRel = useMemo(() =>
+    computeGameMatchupRelationship(gameMatchupDataset, matchupXVar, matchupYVar)
+  , [matchupXVar, matchupYVar])
+  const { confidence } = useMemo(() => scoreInsight(matchupRel.correlation, matchupRel.n), [matchupRel])
+  const regLine = useMemo(() => makeRegLine(matchupRel.points), [matchupRel])
 
-  const { confidence: teamConf } = useMemo(() => scoreInsight(teamBio.correlation, teamBio.n), [teamBio])
-
-  const teamRegLine = useMemo(() => {
-    if (teamBio.points.length < 3) return []
-    const { slope, intercept } = linearRegression(teamBio.points)
-    const xs = teamBio.points.map(p => p.x)
-    const xMin = Math.min(...xs), xMax = Math.max(...xs)
-    const pad = (xMax - xMin) * 0.05
-    return [
-      { x: xMin - pad, y: slope * (xMin - pad) + intercept },
-      { x: xMax + pad, y: slope * (xMax + pad) + intercept },
-    ]
-  }, [teamBio])
-
-  const teamRanked = useMemo(() => [...teamBio.points].sort((a, b) => b.x - a.x), [teamBio])
-
-  const xBioMeta = BIODATA_TEAM_METRICS.find(m => m.key === biodataKey)
-  const yOutMeta = TEAM_METRICS.find(m => m.key === outcomeKey)
-
-  const physPairs  = useMemo(() => {
-    const aggsAll = buildRosterAggregatesWeighted(players)
-    const filteredSeasons = physYear === 0 ? teamSeasons : teamSeasons.filter(s => s.year === physYear)
-    const filteredAggs    = physYear === 0 ? aggsAll     : aggsAll.filter(a => a.year === physYear)
-    return buildPhysicalMatchupPairs(filteredSeasons, filteredAggs)
-  }, [physYear])
-  const physR = useMemo(() => {
-    const valid = physPairs.filter(p => p.heightDiff != null)
-    return valid.length >= 4 ? pearsonCorrelation(valid.map(p => p.heightDiff), valid.map(p => p.winPctDiff)) : null
-  }, [physPairs])
-  const physPoints = useMemo(() =>
-    physPairs.filter(p => p.heightDiff != null).map(p => ({
-      x: p.heightDiff, y: p.winPctDiff,
-      label: `${SCHOOL_META[p.schoolA]?.abbr} vs ${SCHOOL_META[p.schoolB]?.abbr}`, fill: '#6366f1',
-    }))
-  , [physPairs])
-  const physRegLine = useMemo(() => {
-    if (physPoints.length < 3) return []
-    const { slope, intercept } = linearRegression(physPoints)
-    const xs = physPoints.map(p => p.x)
-    const xMin = Math.min(...xs), xMax = Math.max(...xs)
-    const pad = (xMax - xMin) * 0.05
-    return [{ x: xMin-pad, y: slope*(xMin-pad)+intercept }, { x: xMax+pad, y: slope*(xMax+pad)+intercept }]
-  }, [physPoints])
+  const xLabel = MATCHUP_X_GROUPS.flatMap(g => g.metrics).find(m => m.key === matchupXVar)?.label ?? matchupXVar
+  const yLabel = MATCHUP_Y_METRICS.find(m => m.key === matchupYVar)?.label ?? matchupYVar
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 44 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-      {/* ── Roster Composition → Team Outcomes ── */}
-      <div>
-        <div style={{ fontSize: 16, fontWeight: 700, color: '#a5b4fc', marginBottom: 2 }}>Roster Composition → Team Outcomes</div>
-        <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 16 }}>
-          Playing-time weighted roster biodata (min 6 mpg) correlated with season outcomes · all years 2022–2025
-        </div>
-        <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 12, color: '#6b7280' }}>Roster metric →</span>
-            <GlossaryTooltip metricKey={biodataKey}>
-              <select style={SEL} value={biodataKey} onChange={e => setBiodataKey(e.target.value)}>
-                {BIODATA_TEAM_METRICS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
-              </select>
-            </GlossaryTooltip>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 12, color: '#6b7280' }}>Outcome ↑</span>
-            <GlossaryTooltip metricKey={outcomeKey}>
-              <select style={{ ...SEL, minWidth: 180 }} value={outcomeKey} onChange={e => setOutcomeKey(e.target.value)}>
-                {METRIC_BY_GROUP.map(({ group, metrics }) => (
-                  <optgroup key={group} label={group}>
-                    {metrics.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
-                  </optgroup>
-                ))}
-              </select>
-            </GlossaryTooltip>
+      {/* ── Game Matchup scatter ── */}
+      <div style={CARD}>
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: T.accentSoft }}>Physical Differentials → Game Outcomes</div>
+          <div style={{ fontSize: 11, color: T.textLow, marginTop: 2 }}>
+            Game-level position physical differentials · {matchupRel.n} Ivy matchups · 2022–2025
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
+
+        <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12, color: T.textLow }}>X →</span>
+            <select style={{ ...SEL, minWidth: 220 }} value={matchupXVar} onChange={e => setMatchupXVar(e.target.value)}>
+              {MATCHUP_X_GROUPS.map(({ group, metrics }) => (
+                <optgroup key={group} label={group}>
+                  {metrics.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12, color: T.textLow }}>Y ↑</span>
+            <select style={SEL} value={matchupYVar} onChange={e => setMatchupYVar(e.target.value)}>
+              {MATCHUP_Y_METRICS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+            </select>
+          </div>
           <button
             onClick={() => {
-              const { valid } = scoreInsight(teamBio.correlation, teamBio.n)
+              const { valid } = scoreInsight(matchupRel.correlation, matchupRel.n)
               if (!valid) return
               saveRosterFinding({
-                id:    `roster_${biodataKey}_${outcomeKey}`,
-                type:  'correlation',
-                title: `${xBioMeta?.label ?? biodataKey} → ${yOutMeta?.label ?? outcomeKey}`,
-                body:  `r = ${teamBio.correlation.toFixed(3)} · n = ${teamBio.n} team-seasons`,
+                id: `matchup_${matchupXVar}_${matchupYVar}`,
+                type: 'matchup',
+                title: `${xLabel} → ${yLabel}`,
+                body: `r = ${matchupRel.correlation.toFixed(3)} · n = ${matchupRel.n} games`,
                 savedAt: new Date().toLocaleDateString(),
               })
             }}
-            style={{ ...BTN(true, T.accent), padding: '6px 16px', fontSize: 12 }}
-          >
-            Save Finding
-          </button>
+            style={{ ...BTN(true, T.accent), padding: '5px 14px', fontSize: 12 }}
+          >Save</button>
           <span style={{ fontSize: 11, color: T.textLow }}>
-            {(() => { const {valid, reason} = scoreInsight(teamBio.correlation, teamBio.n); return valid ? `r = ${teamBio.correlation.toFixed(3)}` : reason })()}
+            {(() => { const { valid, reason } = scoreInsight(matchupRel.correlation, matchupRel.n); return valid ? `r = ${matchupRel.correlation.toFixed(3)}` : reason })()}
           </span>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 20 }}>
-          <ScatterBlock
-            points={teamBio.points} regressionLine={teamRegLine}
-            correlation={teamBio.correlation} n={teamBio.n} confidence={teamConf}
-            xLabel={xBioMeta?.label ?? biodataKey} yLabel={yOutMeta?.label ?? outcomeKey}
-            tooltipExtra={() => null}
-          />
-          <div style={{ background: '#111111', border: '1px solid #2c2c2c', borderRadius: 12, overflow: 'hidden', alignSelf: 'start' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 64px 64px' }}>
-              <div style={TBL_HDR}>Team / Year</div>
-              <div style={{ ...TBL_HDR, textAlign: 'right' }}>{xBioMeta?.label?.split(' ').pop() ?? 'Bio'}</div>
-              <div style={{ ...TBL_HDR, textAlign: 'right' }}>{yOutMeta?.label ?? outcomeKey}</div>
-            </div>
-            {teamRanked.map(d => {
-              const color = SCHOOL_COLORS[d.school] ?? '#6b7280'
-              const yFmt = yOutMeta?.fmt ? yOutMeta.fmt(d.y) : d.y?.toFixed(2)
-              return (
-                <div key={`${d.school}${d.year}`} style={{ display: 'grid', gridTemplateColumns: '1fr 64px 64px' }}>
-                  <div style={{ ...TBL_CELL, color }}>{SCHOOL_META[d.school]?.abbr} <span style={{ color: '#4b5563', fontSize: 11 }}>{d.year}</span></div>
-                  <div style={{ ...TBL_CELL, color: '#ebebeb', textAlign: 'right', fontWeight: 600 }}>{d.x?.toFixed(1)}</div>
-                  <div style={{ ...TBL_CELL, color: '#9ca3af', textAlign: 'right' }}>{yFmt}</div>
-                </div>
-              )
-            })}
+
+        <ScatterBlock
+          points={matchupRel.points}
+          regressionLine={regLine}
+          correlation={matchupRel.correlation}
+          n={matchupRel.n}
+          confidence={confidence}
+          xLabel={xLabel}
+          yLabel={yLabel}
+          tooltipExtra={(d) => d.opp_school
+            ? <div style={{ color: T.textMd, fontSize: 11 }}>vs {SCHOOL_META[d.opp_school]?.abbr}</div>
+            : null}
+        />
+
+        {positionPhysicalImpact && (
+          <div style={{ marginTop: 16, background: T.surf3, border: `1px solid ${T.amberBg}`, borderRadius: 8, padding: '12px 14px', fontSize: 12, color: T.textMd, lineHeight: 1.7 }}>
+            <span style={{ color: T.amber, fontWeight: 600 }}>OLS context — </span>
+            All physical diffs combined explain <strong style={{ color: T.text }}>{(positionPhysicalImpact.r2 * 100).toFixed(0)}%</strong> of score-diff variance
+            across {positionPhysicalImpact.n} matchups.
+            Strongest signal: guard weight (r = {positionPhysicalImpact.pearson.guardWeight > 0 ? '+' : ''}{positionPhysicalImpact.pearson.guardWeight}).
           </div>
-        </div>
+        )}
       </div>
 
-      {/* ── Section 3: Physical Advantage Analysis ── */}
-      <div>
-        <div style={{ fontSize: 16, fontWeight: 700, color: '#a5b4fc', marginBottom: 2 }}>Height Advantage vs Win % Advantage</div>
-        <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 16 }}>
-          Each point = one cross-school pairing in the same season. Answers: does the taller roster win more often?
-        </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 12, color: T.textLow }}>Season:</span>
-          {[0, ...YEARS].map(y => (
-            <button key={y} onClick={() => setPhysYear(y)}
-              style={{ ...BTN(physYear === y), padding: '5px 12px', fontSize: 12 }}>
-              {y === 0 ? 'All' : y}
-            </button>
-          ))}
-          {physR != null && (
-            <span style={{ fontSize: 13, color: '#9ca3af' }}>
-              r = <span style={{ fontWeight: 700, color: Math.abs(physR) >= 0.35 ? '#10b981' : '#6b7280' }}>{physR.toFixed(3)}</span>
-              <span style={{ color: '#4b5563', marginLeft: 6 }}>n={physPoints.length} pairings</span>
-            </span>
-          )}
-        </div>
-        <div style={CARD}>
-          <ResponsiveContainer width="100%" height={280}>
-            <ComposedChart margin={{ top: 8, right: 16, bottom: 28, left: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2c2c2c" />
-              <XAxis dataKey="x" type="number" scale="linear" domain={['auto','auto']}
-                tick={{ fill: '#6b7280', fontSize: 11 }}
-                label={{ value: 'Height Diff (in, Team A − Team B)', position: 'insideBottom', offset: -16, fill: '#6b7280', fontSize: 12 }} />
-              <YAxis dataKey="y" type="number" domain={['auto','auto']}
-                tick={{ fill: '#6b7280', fontSize: 11 }} width={54}
-                label={{ value: 'Win % Diff', angle: -90, position: 'insideLeft', offset: 10, fill: '#6b7280', fontSize: 12 }} />
-              <ReferenceLine x={0} stroke="#374151" strokeDasharray="3 3" />
-              <ReferenceLine y={0} stroke="#374151" strokeDasharray="3 3" />
-              <Tooltip content={({ active, payload }) => {
-                if (!active || !payload?.[0]) return null
-                const d = payload[0].payload
-                return (
-                  <div style={{ background: '#1a1a1a', border: '1px solid #2c2c2c', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
-                    <div style={{ color: '#ebebeb', fontWeight: 600, marginBottom: 4 }}>{d.label}</div>
-                    <div style={{ color: '#9ca3af' }}>Height diff: {d.x > 0 ? '+' : ''}{d.x}"</div>
-                    <div style={{ color: '#9ca3af' }}>Win% diff: {d.y > 0 ? '+' : ''}{(d.y * 100).toFixed(1)}%</div>
-                  </div>
-                )
-              }} />
-              <Scatter data={physPoints} shape={<CustomDot />} isAnimationActive={false} legendType="none" />
-              {physRegLine.length === 2 && (
-                <Line data={physRegLine} dataKey="y" type="linear" dot={false} activeDot={false}
-                  stroke="#6366f1" strokeWidth={2} strokeDasharray="6 3" isAnimationActive={false} legendType="none" />
-              )}
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      {/* ── Composition Archetype Matchup Matrix ── */}
-      <div>
-        <div style={{ fontSize: 16, fontWeight: 700, color: '#a5b4fc', marginBottom: 2 }}>
-          Composition Archetype Matchups
-        </div>
-        <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 16 }}>
-          Win rate when each archetype faces each other · all Ivy vs Ivy games 2022–2025 · n={archetypeMatchupData.archetypes.length * archetypeMatchupData.archetypes.length} pairings
-        </div>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ borderCollapse: 'collapse', fontSize: 12, minWidth: 520 }}>
-            <thead>
-              <tr>
-                <th style={{ padding: '6px 12px', fontSize: 10, color: '#6b7280', textAlign: 'left', borderBottom: '1px solid #2c2c2c', background: '#0c0c0c' }}>
-                  Offense ↓ vs Defense →
-                </th>
-                {archetypeMatchupData.archetypes.map(b => (
-                  <th key={b} style={{ padding: '6px 10px', fontSize: 10, color: '#9ca3af', fontWeight: 600, textAlign: 'center', borderBottom: '1px solid #2c2c2c', background: '#0c0c0c', whiteSpace: 'nowrap' }}>
-                    {b}
+      {/* ── Archetype Matchup Matrix ── */}
+      <div style={CARD}>
+        <Accordion title="Archetype Matchup Matrix" badge={`${ARCHETYPES.length}×${ARCHETYPES.length} pairings · click cell to save`}>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', fontSize: 12, minWidth: 500 }}>
+              <thead>
+                <tr>
+                  <th style={{ padding: '6px 12px', fontSize: 10, color: T.textLow, textAlign: 'left', borderBottom: `1px solid ${T.border}`, background: T.bgDeep }}>
+                    Offense ↓ vs Defense →
                   </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {archetypeMatchupData.archetypes.map(a => (
-                <tr key={a} style={{ borderBottom: '1px solid #1a1a1a' }}>
-                  <td style={{ padding: '8px 12px', fontWeight: 600, color: '#a5b4fc', whiteSpace: 'nowrap', background: '#0e0e0e' }}>{a}</td>
-                  {archetypeMatchupData.archetypes.map(b => {
-                    const cell = archetypeMatchupData.matrix[a][b]
-                    if (!cell) return <td key={b} style={{ padding: '8px 10px', textAlign: 'center', color: '#374151' }}>—</td>
-                    const wr = cell.winRate
-                    const bg = wr >= 60 ? '#10b98122' : wr >= 50 ? '#6366f122' : wr >= 40 ? '#f59e0b22' : '#ef444422'
-                    const fg = wr >= 60 ? '#10b981'  : wr >= 50 ? '#a5b4fc'  : wr >= 40 ? '#f59e0b'  : '#ef4444'
-                    const isSaved = savedRosterFindings.some(f => f.id === `arch_${a}_${b}`)
-                    return (
-                      <td
-                        key={b}
-                        title="Click to save this matchup finding"
-                        onClick={() => saveRosterFinding({
-                          id: `arch_${a}_${b}`,
-                          type: 'archetype',
-                          title: `${a} vs ${b}`,
-                          body: `${wr}% win rate · ${cell.wins}W–${cell.games - cell.wins}L · ${cell.games} games`,
-                          savedAt: new Date().toLocaleDateString(),
-                        })}
-                        style={{ padding: '8px 10px', textAlign: 'center', background: bg, borderRadius: 4,
-                          cursor: 'pointer', outline: isSaved ? `2px solid ${fg}` : 'none' }}>
-                        <div style={{ fontWeight: 700, color: fg }}>{wr}%</div>
-                        <div style={{ fontSize: 9, color: '#4b5563' }}>{cell.games}g</div>
-                      </td>
-                    )
-                  })}
+                  {archetypeMatchupData.archetypes.map(b => (
+                    <th key={b} style={{ padding: '6px 10px', fontSize: 10, color: T.textMd, fontWeight: 600, textAlign: 'center', borderBottom: `1px solid ${T.border}`, background: T.bgDeep, whiteSpace: 'nowrap' }}>
+                      {b}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div style={{ fontSize: 11, color: '#374151', marginTop: 8 }}>
-          Green ≥ 60% win rate · Purple 50–60% · Amber 40–50% · Red &lt; 40%
-        </div>
+              </thead>
+              <tbody>
+                {archetypeMatchupData.archetypes.map(a => (
+                  <tr key={a} style={{ borderBottom: `1px solid ${T.surf}` }}>
+                    <td style={{ padding: '8px 12px', fontWeight: 600, color: T.accentSoft, whiteSpace: 'nowrap', background: T.surf3 }}>{a}</td>
+                    {archetypeMatchupData.archetypes.map(b => {
+                      const cell = archetypeMatchupData.matrix[a][b]
+                      if (!cell) return <td key={b} style={{ padding: '8px 10px', textAlign: 'center', color: T.textMin }}>—</td>
+                      const wr = cell.winRate
+                      const bg = wr >= 60 ? T.greenBg : wr >= 50 ? `${T.accent}22` : wr >= 40 ? T.amberBg : T.redBg
+                      const fg = wr >= 60 ? T.green : wr >= 50 ? T.accentSoft : wr >= 40 ? T.amber : T.red
+                      const isSaved = savedRosterFindings.some(f => f.id === `arch_${a}_${b}`)
+                      return (
+                        <td key={b} title="Click to save" onClick={() => saveRosterFinding({
+                            id: `arch_${a}_${b}`, type: 'archetype',
+                            title: `${a} vs ${b}`,
+                            body: `${wr}% win rate · ${cell.wins}W–${cell.games - cell.wins}L · ${cell.games} games`,
+                            savedAt: new Date().toLocaleDateString(),
+                          })}
+                          style={{ padding: '8px 10px', textAlign: 'center', background: bg,
+                            cursor: 'pointer', outline: isSaved ? `2px solid ${fg}` : 'none' }}>
+                          <div style={{ fontWeight: 700, color: fg }}>{wr}%</div>
+                          <div style={{ fontSize: 9, color: T.textMin }}>{cell.games}g</div>
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 11, color: T.textMin, marginTop: 8 }}>
+            Green ≥ 60% · Purple 50–60% · Amber 40–50% · Red &lt; 40%
+          </div>
+        </Accordion>
       </div>
 
-      {/* ── Position Physical Impact ── */}
-      {positionPhysicalImpact && (
-        <div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: '#a5b4fc', marginBottom: 2 }}>
-            Position Physical Advantage → Point Differential
-          </div>
-          <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>
-            OLS regression across {positionPhysicalImpact.n} unique Ivy matchups · R² = {positionPhysicalImpact.r2} (physical attributes explain {(positionPhysicalImpact.r2 * 100).toFixed(0)}% of score differential variance)
-          </div>
-          <div style={{ fontSize: 12, color: '#f59e0b', marginBottom: 16 }}>
-            Coefficients = pts per inch/lb of advantage. Negative sign = that position's height advantage historically correlates with fewer points (Ivy-specific finding).
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-            {/* Height coefficients */}
-            <div style={CARD}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: '#ebebeb', marginBottom: 14 }}>Height Advantage (pts/inch)</div>
-              {[
-                { label: 'Guard Height Δ',   coef: positionPhysicalImpact.coefficients.guardHeight, pearson: positionPhysicalImpact.pearson.guardHeight },
-                { label: 'Forward Height Δ', coef: positionPhysicalImpact.coefficients.fwdHeight,   pearson: positionPhysicalImpact.pearson.fwdHeight   },
-                { label: 'Big/C Height Δ',   coef: positionPhysicalImpact.coefficients.bigHeight,   pearson: positionPhysicalImpact.pearson.bigHeight    },
-              ].map(({ label, coef, pearson }) => {
-                const absMax = 2.5
-                const barW = Math.min(Math.abs(coef) / absMax * 100, 100)
-                const barColor = coef >= 0 ? '#10b981' : '#ef4444'
-                return (
-                  <div key={label} style={{ marginBottom: 12 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                      <span style={{ fontSize: 12, color: '#9ca3af' }}>{label}</span>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: barColor }}>{coef > 0 ? '+' : ''}{coef}</span>
-                    </div>
-                    <div style={{ background: '#2c2c2c', borderRadius: 3, height: 8, position: 'relative', overflow: 'hidden' }}>
-                      <div style={{ position: 'absolute', [coef >= 0 ? 'left' : 'right']: '50%', width: barW / 2 + '%', height: '100%', background: barColor, opacity: 0.7 }} />
-                      <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: '#374151' }} />
-                    </div>
-                    <div style={{ fontSize: 10, color: '#4b5563', marginTop: 2 }}>Pearson r = {pearson > 0 ? '+' : ''}{pearson}</div>
-                  </div>
-                )
-              })}
-            </div>
-
-            {/* Weight coefficients */}
-            <div style={CARD}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: '#ebebeb', marginBottom: 14 }}>Weight Advantage (pts/lb)</div>
-              {[
-                { label: 'Guard Weight Δ',   coef: positionPhysicalImpact.coefficients.guardWeight, pearson: positionPhysicalImpact.pearson.guardWeight },
-                { label: 'Forward Weight Δ', coef: positionPhysicalImpact.coefficients.fwdWeight,   pearson: positionPhysicalImpact.pearson.fwdWeight   },
-                { label: 'Big/C Weight Δ',   coef: positionPhysicalImpact.coefficients.bigWeight,   pearson: positionPhysicalImpact.pearson.bigWeight    },
-              ].map(({ label, coef, pearson }) => {
-                const absMax = 0.4
-                const barW = Math.min(Math.abs(coef) / absMax * 100, 100)
-                const barColor = coef >= 0 ? '#10b981' : '#ef4444'
-                return (
-                  <div key={label} style={{ marginBottom: 12 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                      <span style={{ fontSize: 12, color: '#9ca3af' }}>{label}</span>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: barColor }}>{coef > 0 ? '+' : ''}{coef}</span>
-                    </div>
-                    <div style={{ background: '#2c2c2c', borderRadius: 3, height: 8, position: 'relative', overflow: 'hidden' }}>
-                      <div style={{ position: 'absolute', [coef >= 0 ? 'left' : 'right']: '50%', width: barW / 2 + '%', height: '100%', background: barColor, opacity: 0.7 }} />
-                      <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: '#374151' }} />
-                    </div>
-                    <div style={{ fontSize: 10, color: '#4b5563', marginTop: 2 }}>Pearson r = {pearson > 0 ? '+' : ''}{pearson}</div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-
-          <div style={{ ...CARD, marginTop: 16, background: '#0e0e0e', borderColor: '#f59e0b33' }}>
-            <div style={{ fontSize: 12, color: '#f59e0b', fontWeight: 600, marginBottom: 6 }}>Key Finding</div>
-            <div style={{ fontSize: 12, color: '#9ca3af', lineHeight: 1.7 }}>
-              Physical attributes collectively explain only <strong style={{ color: '#ebebeb' }}>{(positionPhysicalImpact.r2 * 100).toFixed(0)}%</strong> of point differential variance in Ivy League games —
-              skill, scheme, and execution dominate. Guard weight advantage ({positionPhysicalImpact.pearson.guardWeight > 0 ? '+' : ''}{positionPhysicalImpact.pearson.guardWeight} r) shows the strongest positive individual correlation,
-              while height advantages at all positions are near-zero or slightly negative — contrary to the conventional wisdom that bigger teams win.
-              Center height advantage (r = {positionPhysicalImpact.pearson.bigHeight}) is <em>not</em> stronger than guard height (r = {positionPhysicalImpact.pearson.guardHeight}).
-            </div>
-            <button
-              onClick={() => saveRosterFinding({
-                id: 'physical_impact_regression',
-                type: 'physical',
-                title: 'Position Physical Impact (OLS)',
-                body: `R² = ${positionPhysicalImpact.r2} · ${positionPhysicalImpact.n} matchups · Guard weight r = ${positionPhysicalImpact.pearson.guardWeight > 0 ? '+' : ''}${positionPhysicalImpact.pearson.guardWeight} · Big height r = ${positionPhysicalImpact.pearson.bigHeight}`,
-                savedAt: new Date().toLocaleDateString(),
-              })}
-              style={{ ...BTN(true, T.accent), marginTop: 12, padding: '6px 16px', fontSize: 12 }}
-            >
-              Save Finding
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Saved Roster Findings ── */}
+      {/* ── Saved Findings ── */}
       {savedRosterFindings.length > 0 && (
         <div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: T.accentSoft, marginBottom: 10 }}>
-            Saved Findings
-          </div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: T.accentSoft, marginBottom: 10 }}>Saved Findings</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {savedRosterFindings.map(item => (
               <div key={item.id} style={{ background: T.surf, border: `1px solid ${T.border}`, borderRadius: 8, padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                     <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4,
-                      background: item.type === 'archetype' ? `${T.accent}22` : item.type === 'physical' ? `${T.amber}22` : `${T.green}22`,
-                      color:      item.type === 'archetype' ? T.accentSoft : item.type === 'physical' ? T.amber : T.green,
+                      background: item.type === 'archetype' ? `${T.accent}22` : item.type === 'matchup' ? `${T.cyan}22` : T.greenBg,
+                      color:      item.type === 'archetype' ? T.accentSoft   : item.type === 'matchup' ? T.cyan       : T.green,
                       fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                       {item.type}
                     </span>
@@ -1099,6 +1054,26 @@ function RosterBioPanel() {
           </div>
         </div>
       )}
+
+      <PageConclusions title="Physical Matchup Takeaways" conclusions={[
+        {
+          label: 'OLS Summary',
+          text: positionPhysicalImpact
+            ? `Position-level physical diffs explain ${(positionPhysicalImpact.r2 * 100).toFixed(0)}% of game score variance across ${positionPhysicalImpact.n} Ivy matchups. Guard weight (r = ${positionPhysicalImpact.pearson.guardWeight > 0 ? '+' : ''}${positionPhysicalImpact.pearson.guardWeight}) is the strongest trainable signal — more so than center height (r = ${positionPhysicalImpact.pearson.bigHeight}).`
+            : 'Not enough game data to compute OLS.',
+          color: T.amber,
+        },
+        {
+          label: 'Implication',
+          text: 'Physical attributes alone are a weak predictor — roughly 85%+ of outcome variance comes from skill, scheme, and efficiency. Roster physical edge is a tie-breaker, not a driver. Focus scatter analysis on matchups where r > 0.30.',
+          color: T.textMd,
+        },
+        {
+          label: 'How to Use',
+          text: 'Select a position differential on the X-axis and point differential on Y. Look for r > 0.25 as evidence of physical leverage in Ivy-specific matchups.',
+          color: T.accentSoft,
+        },
+      ]} />
 
     </div>
   )
@@ -1119,13 +1094,8 @@ export default function InsightsLab() {
     <div style={{ background: T.bg, minHeight: '100vh' }}>
       <PageHeader
         title="Insights Lab"
-        subtitle="Explore relationships in Ivy League basketball data · 2022–2025"
-        stats={[
-          { label: 'Team-Seasons',   value: '32' },
-          { label: 'Player-Seasons', value: '458' },
-          { label: 'Ivy Games',      value: '236' },
-          { label: 'Metrics',        value: String(TEAM_METRICS.length) },
-        ]}
+        subtitle={`32 team-seasons · 458 player-seasons · 236 Ivy games · ${ALL_METRICS_FLAT.length} metrics · 2022–2025`}
+        stats={[]}
         controls={
           <div style={{ display: 'flex', gap: 4 }}>
             {TABS.map(([v, lbl]) => (
