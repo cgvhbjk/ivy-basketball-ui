@@ -6,6 +6,7 @@ const LINKS = [
   { to: '/analyzer', label: 'Matchup Analyzer' },
   { to: '/insights',  label: 'Insights Lab'     },
   { to: '/players',   label: 'Player Lab'        },
+  { to: '/epa',       label: 'EPA Lab'           },
 ]
 
 export default function Navbar() {
