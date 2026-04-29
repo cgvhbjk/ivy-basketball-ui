@@ -4,57 +4,61 @@ import {
   Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts'
 import teamSeasons from '../data/teamSeasons.json'
-import gameLogs from '../data/gameLogs.json'
-import { runTier1Regression, runTier2Regression } from '../utils/epaEngine.js'
+import gameLogs    from '../data/gameLogs.json'
+import { runEPAPipeline } from '../utils/epaModels/pipeline.js'
+import { runTier2Pipeline } from '../utils/epaModels/tier2.js'
 import useEpaStore from '../store/useEpaStore.js'
 import PageHeader from '../components/shared/PageHeader.jsx'
+import DiagnosticsPanel from '../components/epa/DiagnosticsPanel.jsx'
+import ModelComparisonTable from '../components/epa/ModelComparisonTable.jsx'
 import { T, CARD, BTN } from '../styles/theme.js'
 
-// ── Sub-components ─────────────────────────────────────────────────────────────
-
-const EVENT_ROWS = [
-  { key: 'made2FG',            label: 'Made 2-pt FG'          },
-  { key: 'made3FG',            label: 'Made 3-pt FG'          },
-  { key: 'offTurnover',        label: 'Offensive Turnover'    },
-  { key: 'offRebound',         label: 'Offensive Rebound'     },
-  { key: 'foulDrawn',          label: 'Foul Drawn (FT)'       },
-  { key: 'defForcedTurnover',  label: 'Forced Turnover (def)' },
-  { key: 'defShotSuppression', label: 'Shot Suppression (def)'},
-]
-
-const COEFF_ROWS = [
-  { key: 'off_eFG', label: 'Off eFG%',   interp: 'Higher shooting quality → more net pts' },
-  { key: 'off_TOV', label: 'Off TOV%',   interp: 'Each extra turnover → net efficiency loss' },
-  { key: 'off_ORB', label: 'Off ORB%',   interp: 'Extra offensive board → extra possession' },
-  { key: 'off_FTR', label: 'Off FTR',    interp: 'Drawing fouls → marginal scoring edge' },
-  { key: 'def_eFG', label: 'Def eFG%',   interp: 'Allowing better shooting → efficiency loss' },
-  { key: 'def_TOV', label: 'Def TOV%',   interp: 'Forcing opponent TOs → net efficiency gain' },
-  { key: 'def_ORB', label: 'Def ORB%',   interp: 'Opponent offensive boards → efficiency loss' },
-  { key: 'def_FTR', label: 'Def FTR',    interp: 'Opponent free throws → efficiency loss' },
-]
+// ── Shared sub-components ─────────────────────────────────────────────────────
 
 function EpaPill({ value }) {
-  const pos = value >= 0
+  const pos = value > 0
+  const zero = value === 0
   return (
     <span style={{
-      background: pos ? '#E1F5EE' : '#FCEBEB',
-      color:      pos ? '#085041' : '#791F1F',
-      borderRadius: 4, padding: '2px 8px',
-      fontSize: 12, fontWeight: 700, display: 'inline-block', minWidth: 52, textAlign: 'center',
+      background: zero ? T.surf2 : pos ? '#E1F5EE' : '#FCEBEB',
+      color:      zero ? T.textLow : pos ? '#085041' : '#791F1F',
+      borderRadius: 4, padding: '2px 8px', fontSize: 12, fontWeight: 700,
+      display: 'inline-block', minWidth: 58, textAlign: 'center',
     }}>
-      {pos ? '+' : ''}{value.toFixed(3)}
+      {zero ? '0 (constrained)' : `${pos ? '+' : ''}${value.toFixed(3)}`}
     </span>
   )
 }
 
-function EventEPATable({ result }) {
-  if (result.error) return <ErrorBox msg={result.error} />
+const EVENT_ROWS = [
+  { key: 'made2FG',            label: 'Made 2-pt FG'           },
+  { key: 'made3FG',            label: 'Made 3-pt FG'           },
+  { key: 'offTurnover',        label: 'Offensive Turnover'     },
+  { key: 'offRebound',         label: 'Offensive Rebound'      },
+  { key: 'foulDrawn',          label: 'Foul Drawn (FT)'        },
+  { key: 'defForcedTurnover',  label: 'Forced Turnover (def)'  },
+  { key: 'defShotSuppression', label: 'Shot Suppression (def)' },
+]
+
+const COEFF_META = [
+  { key: 'off_eFG', label: 'Off eFG%',  note: 'shooting quality' },
+  { key: 'off_TOV', label: 'Off TOV',   note: 'tov_o (directional encoding unclear in Barttorvik)' },
+  { key: 'off_ORB', label: 'Off ORB',   note: 'orb (directional encoding unclear in Barttorvik)' },
+  { key: 'off_FTR', label: 'Off FTR',   note: 'free throw rate' },
+  { key: 'def_eFG', label: 'Def eFG%',  note: 'opponent shooting quality' },
+  { key: 'def_TOV', label: 'Def TOV',   note: 'tov_d (directional encoding unclear in Barttorvik)' },
+  { key: 'def_ORB', label: 'Def ORB',   note: 'drb (directional encoding unclear in Barttorvik)' },
+  { key: 'def_FTR', label: 'Def FTR',   note: 'opponent free throw rate' },
+]
+
+function EventEPATable({ epa }) {
+  if (!epa) return <div style={{ color: T.textMin, fontSize: 12 }}>No EPA values</div>
   return (
     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
       <thead>
         <tr style={{ borderBottom: `1px solid ${T.border}` }}>
-          <th style={{ textAlign: 'left', padding: '6px 0', color: T.textLow, fontWeight: 500 }}>Event</th>
-          <th style={{ textAlign: 'right', padding: '6px 0', color: T.textLow, fontWeight: 500 }}>EPA</th>
+          <th style={{ textAlign: 'left', padding: '5px 0', color: T.textLow, fontWeight: 500 }}>Event</th>
+          <th style={{ textAlign: 'right', padding: '5px 0', color: T.textLow, fontWeight: 500 }}>EPA</th>
         </tr>
       </thead>
       <tbody>
@@ -62,7 +66,7 @@ function EventEPATable({ result }) {
           <tr key={key} style={{ borderBottom: `1px solid ${T.border}20` }}>
             <td style={{ padding: '7px 0', color: T.textMd }}>{label}</td>
             <td style={{ padding: '7px 0', textAlign: 'right' }}>
-              <EpaPill value={result.eventEPA[key]} />
+              <EpaPill value={epa[key] ?? 0} />
             </td>
           </tr>
         ))}
@@ -71,145 +75,151 @@ function EventEPATable({ result }) {
   )
 }
 
-function CoeffTable({ result }) {
-  if (result.error) return <ErrorBox msg={result.error} />
+function CoeffTable({ coefficients }) {
+  if (!coefficients) return <div style={{ color: T.textMin, fontSize: 12 }}>No coefficients</div>
   return (
     <div>
       <p style={{ fontSize: 11, color: T.textLow, marginBottom: 10 }}>
-        β_TOV of −1.2 means one extra turnover per 100 possessions costs 1.2 pts of net efficiency.
+        β_eFG of 1.2 means a 1% increase in eFG% adds 1.2 pts of net efficiency per 100 possessions.
+        Fields marked "encoding unclear" have ambiguous direction in Barttorvik data; constrained model zeros these out.
       </p>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
         <thead>
           <tr style={{ borderBottom: `1px solid ${T.border}` }}>
             <th style={{ textAlign: 'left', padding: '5px 0', color: T.textLow, fontWeight: 500 }}>Factor</th>
-            <th style={{ textAlign: 'right', padding: '5px 0', color: T.textLow, fontWeight: 500 }}>β</th>
-            <th style={{ textAlign: 'left', padding: '5px 8px', color: T.textLow, fontWeight: 500 }}>Interpretation</th>
+            <th style={{ textAlign: 'right', padding: '5px 6px', color: T.textLow, fontWeight: 500 }}>β</th>
+            <th style={{ textAlign: 'left', padding: '5px 8px', color: T.textLow, fontWeight: 500 }}>Note</th>
           </tr>
         </thead>
         <tbody>
-          {COEFF_ROWS.map(({ key, label, interp }) => (
-            <tr key={key} style={{ borderBottom: `1px solid ${T.border}20` }}>
-              <td style={{ padding: '6px 0', color: T.textMd }}>{label}</td>
-              <td style={{ padding: '6px 0', textAlign: 'right', fontFamily: 'monospace', color: T.text }}>
-                {result.coefficients[key]?.toFixed(4) ?? '—'}
-              </td>
-              <td style={{ padding: '6px 8px', color: T.textLow, fontSize: 11 }}>{interp}</td>
-            </tr>
-          ))}
+          {COEFF_META.map(({ key, label, note }) => {
+            const val = coefficients[key]
+            return (
+              <tr key={key} style={{ borderBottom: `1px solid ${T.border}20` }}>
+                <td style={{ padding: '6px 0', color: T.textMd }}>{label}</td>
+                <td style={{ padding: '6px 6px', textAlign: 'right', fontFamily: 'monospace', color: T.text }}>
+                  {val != null ? val.toFixed(4) : '—'}
+                </td>
+                <td style={{ padding: '6px 8px', color: T.textMin, fontSize: 11 }}>{note}</td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>
   )
 }
 
-function ScatterPlot({ result }) {
-  if (result.error) return <ErrorBox msg={result.error} />
-  const min = Math.min(...result.observations.map(o => Math.min(o.actual, o.predicted))) - 2
-  const max = Math.max(...result.observations.map(o => Math.max(o.actual, o.predicted))) + 2
+function ScatterViz({ observations, r2, n, label }) {
+  if (!observations?.length) return <div style={{ color: T.textMin, fontSize: 12 }}>No observations</div>
+  const vals = observations.flatMap(o => [o.actual, o.predicted])
+  const min  = Math.min(...vals) - 2
+  const max  = Math.max(...vals) + 2
   return (
     <div>
       <div style={{ fontSize: 11, color: T.textLow, marginBottom: 8 }}>
-        R² = {result.r2.toFixed(3)} — {result.n} observations · dots near the diagonal = good fit
+        {label} · R² = {r2?.toFixed(3) ?? '—'} · {n} obs · dots near diagonal = good fit
       </div>
-      <ResponsiveContainer width="100%" height={220}>
-        <ScatterChart margin={{ top: 4, right: 12, bottom: 12, left: 0 }}>
+      <ResponsiveContainer width="100%" height={210}>
+        <ScatterChart margin={{ top: 4, right: 12, bottom: 14, left: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={T.border} />
-          <XAxis dataKey="actual"    type="number" domain={[min, max]} name="Actual"    tick={{ fontSize: 10, fill: T.textLow }} label={{ value: 'Actual net eff.', position: 'insideBottom', offset: -4, fontSize: 10, fill: T.textLow }} />
-          <YAxis dataKey="predicted" type="number" domain={[min, max]} name="Predicted" tick={{ fontSize: 10, fill: T.textLow }} width={36} />
-          <Tooltip cursor={{ strokeDasharray: '3 3' }} content={({ payload }) => {
+          <XAxis dataKey="actual"    type="number" domain={[min, max]} tick={{ fontSize: 10, fill: T.textLow }} label={{ value: 'Actual', position: 'insideBottom', offset: -4, fontSize: 10, fill: T.textLow }} />
+          <YAxis dataKey="predicted" type="number" domain={[min, max]} tick={{ fontSize: 10, fill: T.textLow }} width={36} />
+          <Tooltip content={({ payload }) => {
             if (!payload?.length) return null
-            const { label, actual, predicted } = payload[0].payload
+            const { label: lbl, actual, predicted } = payload[0].payload
             return (
               <div style={{ background: T.surf, border: `1px solid ${T.border}`, borderRadius: 6, padding: '6px 10px', fontSize: 11 }}>
-                <div style={{ color: T.text, fontWeight: 600, marginBottom: 2 }}>{label}</div>
-                <div style={{ color: T.textMd }}>Actual: {actual.toFixed(1)}</div>
-                <div style={{ color: T.textMd }}>Predicted: {predicted.toFixed(1)}</div>
+                <div style={{ color: T.text, fontWeight: 600 }}>{lbl}</div>
+                <div style={{ color: T.textMd }}>Actual: {actual?.toFixed(1)}</div>
+                <div style={{ color: T.textMd }}>Predicted: {predicted?.toFixed(1)}</div>
               </div>
             )
           }} />
-          <ReferenceLine segment={[{ x: min, y: min }, { x: max, y: max }]} stroke={T.accent} strokeDasharray="4 4" strokeOpacity={0.6} />
-          <Scatter data={result.observations} fill={T.accentSoft} fillOpacity={0.75} />
+          <ReferenceLine segment={[{ x: min, y: min }, { x: max, y: max }]} stroke={T.accent} strokeDasharray="4 4" strokeOpacity={0.5} />
+          <Scatter data={observations} fill={T.accentSoft} fillOpacity={0.75} />
         </ScatterChart>
       </ResponsiveContainer>
     </div>
   )
 }
 
-function ErrorBox({ msg }) {
-  return (
-    <div style={{ background: '#FCEBEB', color: '#791F1F', borderRadius: 8, padding: '10px 14px', fontSize: 12 }}>
-      {msg}
-    </div>
-  )
-}
-
-function TierSection({ title, badge, result, activeComparison }) {
+function TierCard({ badge, tier, result, activeComparison, observations, synthetic }) {
   if (!result) return (
     <div style={{ ...CARD, marginBottom: 20 }}>
-      <div style={{ fontSize: 13, fontWeight: 600, color: T.textLow, marginBottom: 6 }}>{title}</div>
-      <div style={{ fontSize: 12, color: T.textMin, fontFamily: 'monospace' }}>
-        Game log data not loaded. Run: node scripts/generate-mock-gamelogs.mjs
+      <div style={{ fontSize: 12, color: T.textMin }}>
+        {badge}: Game log data not loaded. Run: <code style={{ color: T.amber }}>node scripts/generate-mock-gamelogs.mjs</code>
       </div>
     </div>
   )
+  if (result.error || result.status === 'error') return (
+    <div style={{ ...CARD, marginBottom: 20, borderColor: T.red }}>
+      <span style={{ fontSize: 11, fontWeight: 700, color: T.red }}>{badge}</span>
+      <div style={{ fontSize: 12, color: T.red, marginTop: 6 }}>{result.error ?? result.messages?.[0]}</div>
+    </div>
+  )
+  const r = result.result ?? result
   return (
     <div style={{ ...CARD, marginBottom: 20 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-        <span style={{ background: T.accent + '22', color: T.accentSoft, borderRadius: 4, padding: '2px 8px', fontSize: 11, fontWeight: 700 }}>
-          {badge}
-        </span>
-        <span style={{ fontSize: 12, color: T.textMd }}>{result.label}</span>
-        {!result.error && (
-          <>
-            <span style={{ fontSize: 11, color: T.textLow }}>R² = {result.r2?.toFixed(3)}</span>
-            <span style={{ fontSize: 11, color: T.textLow }}>RMSE = {result.rmse}</span>
-          </>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+        <span style={{ background: T.accent + '22', color: T.accentSoft, borderRadius: 4, padding: '2px 8px', fontSize: 11, fontWeight: 700 }}>{badge}</span>
+        <span style={{ fontSize: 12, color: T.textMd }}>{r.label ?? tier}</span>
+        {r.r2 != null && <span style={{ fontSize: 11, color: T.textLow }}>R²={r.r2}</span>}
+        {r.cvR2 != null && <span style={{ fontSize: 11, color: T.blue }}>CVR²={r.cvR2}</span>}
+        {r.rmse != null && <span style={{ fontSize: 11, color: T.textLow }}>RMSE={r.rmse}</span>}
+        {r.alpha != null && <span style={{ fontSize: 11, color: T.blue }}>λ={r.alpha}</span>}
+        {synthetic && (
+          <span style={{ background: T.amberBg, color: T.amber, borderRadius: 4, padding: '2px 7px', fontSize: 10, fontWeight: 600 }}>SYNTHETIC</span>
         )}
       </div>
-      {activeComparison === 'events'       && <EventEPATable result={result} />}
-      {activeComparison === 'coefficients' && <CoeffTable    result={result} />}
-      {activeComparison === 'scatter'      && <ScatterPlot   result={result} />}
+      {synthetic && (
+        <div style={{ fontSize: 11, color: T.amber, marginBottom: 12 }}>
+          Synthetic game data — not validated. Replace gameLogs.json with real Barttorvik per-game box scores.
+        </div>
+      )}
+      {activeComparison === 'events'       && <EventEPATable  epa={r.eventEPA} />}
+      {activeComparison === 'coefficients' && <CoeffTable     coefficients={r.coefficients} />}
+      {activeComparison === 'scatter'      && <ScatterViz     observations={observations ?? r.observations} r2={r.r2} n={r.n} label={r.label} />}
     </div>
   )
 }
 
-// ── Main page ──────────────────────────────────────────────────────────────────
+// ── Main page ─────────────────────────────────────────────────────────────────
 
 const TABS = ['events', 'coefficients', 'scatter']
 
 export default function EpaLab() {
   const { ivyOnly, activeComparison, setIvyOnly, setActiveComparison } = useEpaStore()
 
-  const tier1 = useMemo(() => {
-    try { return runTier1Regression(teamSeasons) }
-    catch (e) { return { error: e.message } }
+  const pipeline = useMemo(() => {
+    try { return runEPAPipeline(teamSeasons, { targetMode: 'raw' }) }
+    catch (e) { return { status: 'error', messages: [e.message], models: null } }
   }, [])
 
   const tier2 = useMemo(() => {
     if (!gameLogs?.length) return null
-    try { return runTier2Regression(gameLogs, { ivyOnly }) }
-    catch (e) { return { error: e.message } }
-  }, [ivyOnly])
+    try { return runTier2Pipeline(gameLogs, pipeline.leagueRates ?? {}, { ivyOnly }) }
+    catch (e) { return { status: 'error', messages: [e.message] } }
+  }, [ivyOnly, pipeline.leagueRates])
+
+  const sel  = pipeline.selectedModel
+  const best = pipeline.models?.[sel]
 
   return (
     <div style={{ background: T.bg, minHeight: '100vh' }}>
       <PageHeader
         title="EPA Lab"
-        subtitle="Derives event Estimated Points Added from OLS regression on four-factor data — no assumed weights."
-        stats={!tier1.error ? [
-          { label: 'Tier 1 R²',   value: tier1.r2?.toFixed(3),  color: tier1.r2 > 0.7 ? T.green : T.amber },
-          { label: 'Tier 1 n',    value: tier1.n },
-          { label: 'Tier 1 RMSE', value: tier1.rmse },
+        subtitle="Derives event EPA from OLS/Ridge regression on four-factor data. Model selected by LOO-CV — no assumed weights."
+        stats={pipeline.status !== 'error' ? [
+          { label: 'Model',     value: sel?.replace('_', ' ') ?? '—', color: T.accentSoft },
+          { label: 'Off CVR²',  value: pipeline.models?.ridge_split?.offCvR2 ?? '—', color: T.green },
+          { label: 'Def CVR²',  value: pipeline.models?.ridge_split?.defCvR2 ?? '—', color: T.green },
+          { label: 'FGA/100',   value: pipeline.leagueRates?.avgFGAp100 ?? '—', color: T.textMd },
         ] : []}
         controls={
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: T.textMd, cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={ivyOnly}
-                onChange={e => setIvyOnly(e.target.checked)}
-                style={{ accentColor: T.accent }}
-              />
+              <input type="checkbox" checked={ivyOnly} onChange={e => setIvyOnly(e.target.checked)} style={{ accentColor: T.accent }} />
               Ivy-vs-Ivy only (Tier 2)
             </label>
             <div style={{ display: 'flex', gap: 4 }}>
@@ -224,12 +234,40 @@ export default function EpaLab() {
       />
 
       <div style={{ padding: '0 28px 40px' }}>
-        <div style={{ fontSize: 11, color: T.amber, background: T.amberBg, borderRadius: 6, padding: '6px 12px', marginBottom: 20, display: 'inline-block' }}>
-          Using synthetic data — replace gameLogs.json with output from fetch-game-logs.mjs for real Barttorvik game-log data.
-        </div>
+        {pipeline.status === 'error'
+          ? <div style={{ background: T.redBg, color: T.red, borderRadius: 8, padding: '12px 16px', marginBottom: 20 }}>
+              {pipeline.messages?.join(' · ')}
+            </div>
+          : <>
+              <DiagnosticsPanel
+                diagnostics={pipeline.diagnostics}
+                messages={pipeline.messages}
+                selectionReason={pipeline.selectionReason}
+              />
 
-        <TierSection title="Tier 1" badge="TIER 1" result={tier1} activeComparison={activeComparison} />
-        <TierSection title="Tier 2" badge="TIER 2" result={tier2} activeComparison={activeComparison} />
+              <div style={{ ...CARD, marginBottom: 20 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: T.accentSoft, marginBottom: 12 }}>MODEL COMPARISON</div>
+                <ModelComparisonTable models={pipeline.models} selectedModel={sel} />
+              </div>
+
+              <TierCard
+                badge="TIER 1"
+                tier="Team-season (real data)"
+                result={best}
+                activeComparison={activeComparison}
+                observations={pipeline.observations}
+                synthetic={false}
+              />
+            </>
+        }
+
+        <TierCard
+          badge="TIER 2"
+          tier="Game logs"
+          result={tier2}
+          activeComparison={activeComparison}
+          synthetic={tier2?.synthetic}
+        />
       </div>
     </div>
   )
