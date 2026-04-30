@@ -142,6 +142,9 @@ export function classifyOffScheme(season) {
   return 'Grind It Out'
 }
 
+// Thresholds: tov_d (TOV% Forced) ≥ 31 → elite pressure (Ivy range ~17–35%);
+// blk_d (block rate = blocks ÷ opp FGA × 100) ≥ 11 → elite rim protection (Ivy range ~6.5–12.7%);
+// efg_d (eFG% allowed) ≤ 50 → perimeter lockdown.
 export function classifyDefScheme(season) {
   if (season.tov_d  >= 31) return 'High Pressure'
   if (season.blk_d  >= 11) return 'Rim Protection'
@@ -993,7 +996,7 @@ export function classifySchemeFromRoster(season, squad) {
   const avgBigWt  = weightedAvg(bigs, 'weight_lbs') ?? 0
   const topUsg    = Math.max(0, ...eligible.map(p => p.usg ?? 0))
 
-  const { tempo, three_rate_o, tov_o, two_pct_o, stl_d, blk_d, efg_d, tov_d } = season
+  const { tempo, three_rate_o, tov_o, two_pct_o, blk_d, efg_d, tov_d } = season
 
   let offScheme, offSignals
   if (tempo > 72) {

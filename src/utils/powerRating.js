@@ -90,13 +90,13 @@ export function computePowerRatings(teamSeasons, players) {
 
   const X = obs.map(o => o.x)
   const Y = obs.map(o => o.y)
-  const [, bOrtg, bDrtg] = ols(X, Y)
+  const [bIntercept, bOrtg, bDrtg] = ols(X, Y)
 
   // R² for diagnostics
   const yMean = Y.reduce((s, v) => s + v, 0) / Y.length
-  const yHat = obs.map(o => bOrtg * o.x[1] + bDrtg * o.x[2] + obs.reduce((_, __, i) => ols(X, Y)[0], 0))
+  const yHat = obs.map(o => bIntercept + bOrtg * o.x[1] + bDrtg * o.x[2])
   const ssTot = Y.reduce((s, v) => s + (v - yMean) ** 2, 0)
-  const ssRes = Y.reduce((s, v, i) => s + (v - (bOrtg * obs[i].x[1] + bDrtg * obs[i].x[2])) ** 2, 0)
+  const ssRes = Y.reduce((s, v, i) => s + (v - yHat[i]) ** 2, 0)
   const r2 = ssTot > 0 ? 1 - ssRes / ssTot : 0
 
   // Player power rating = β_ortg × (ORTG − avg) × minShare

@@ -1,13 +1,13 @@
 export const SCHOOLS = ['harvard', 'yale', 'penn', 'princeton', 'dartmouth', 'cornell', 'brown', 'columbia']
 
 export const SCHOOL_META = {
-  harvard:   { abbr: 'HAR', fullName: 'Harvard Crimson',      color: '#A51C30' },
-  yale:      { abbr: 'YAL', fullName: 'Yale Bulldogs',         color: '#00356B' },
-  penn:      { abbr: 'PEN', fullName: 'Penn Quakers',          color: '#990000' },
+  harvard:   { abbr: 'HAR', fullName: 'Harvard Crimson',      color: '#D44F5C' },
+  yale:      { abbr: 'YAL', fullName: 'Yale Bulldogs',         color: '#2878C7' },
+  penn:      { abbr: 'PEN', fullName: 'Penn Quakers',          color: '#CC2222' },
   princeton: { abbr: 'PRI', fullName: 'Princeton Tigers',      color: '#F58025' },
-  dartmouth: { abbr: 'DAR', fullName: 'Dartmouth Big Green',   color: '#00693E' },
-  cornell:   { abbr: 'COR', fullName: 'Cornell Big Red',       color: '#B31B1B' },
-  brown:     { abbr: 'BRO', fullName: 'Brown Bears',           color: '#4E3629' },
+  dartmouth: { abbr: 'DAR', fullName: 'Dartmouth Big Green',   color: '#0DAF68' },
+  cornell:   { abbr: 'COR', fullName: 'Cornell Big Red',       color: '#D63B3B' },
+  brown:     { abbr: 'BRO', fullName: 'Brown Bears',           color: '#7D5643' },
   columbia:  { abbr: 'COL', fullName: 'Columbia Lions',        color: '#B9D9EB' },
 }
 

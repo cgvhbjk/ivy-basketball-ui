@@ -26,6 +26,11 @@ export const GLOSSARY = {
   two_pct_o:    { label: '2P% (Off)',        definition: '2-point FG percentage — measures inside scoring and mid-range.',                              calc: '2PM ÷ 2PA',             type: 'raw', group: 'Shooting' },
   two_pct_d:    { label: '2P% Allowed',      definition: "Opponents' 2-point percentage — measures interior defense.",                                  calc: 'Opp 2PM ÷ Opp 2PA',    type: 'raw', group: 'Shooting' },
   ft_pct:       { label: 'FT%',              definition: 'Free throw percentage.',                                                                      calc: 'FTM ÷ FTA',             type: 'raw', group: 'Shooting' },
+  // ── Team defense counting ──
+  blk_d:  { label: 'Block Rate (Def)',  definition: 'Percentage of opponent field goal attempts blocked by the defense. The primary signal for rim protection — values above 11% are elite for Ivy.', calc: 'Blocks ÷ Opp FGA × 100', type: 'derived', group: 'Defense' },
+  stl_d:  { label: 'Steal Share (Def)', definition: 'Steals as a percentage of total opponent turnovers forced — what fraction of forced turnovers were live-ball steals vs. dead-ball violations. Higher = more active, pressure-oriented defense.', calc: 'Steals ÷ Opp Turnovers × 100', type: 'derived', group: 'Defense' },
+  blk_pg: { label: 'Blocks/G',          definition: 'Blocks recorded by the team per game — raw counting stat.', calc: 'Total blocks ÷ games played', type: 'raw', group: 'Defense' },
+  stl_pg: { label: 'Steals/G',          definition: 'Steals recorded by the team per game — raw counting stat.', calc: 'Total steals ÷ games played', type: 'raw', group: 'Defense' },
   // ── Pace ──
   tempo: { label: 'Tempo (poss/40)', definition: 'Possessions per 40 minutes — pace of play.', calc: 'Barttorvik adjusted tempo', type: 'derived', group: 'Pace' },
   // ── Player counting ──

@@ -115,16 +115,30 @@ assert(
 )
 
 // ── 8. Synthetic Tier 2 is flagged ───────────────────────────────────────────
+// Uses inline synthetic rows (no game_id/source = detected as synthetic).
+// Tests are self-contained and do not depend on gameLogs.json content.
 console.log('\n[8] Synthetic Tier 2 guard')
-const t2 = runTier2Pipeline(gameLogs, rates)
+
+const IVY = ['harvard','yale','princeton','columbia','penn','brown','dartmouth','cornell']
+const syntheticLogs = Array.from({ length: 25 }, (_, i) => ({
+  school:          IVY[i % IVY.length],
+  year:            2024,
+  opponent:        'Opponent University',
+  is_ivy_opponent: false,
+  pts: 70, opp_pts: 65,
+  fgm: 26, fga: 60, fg3m: 6, fg3a: 18, ftm: 12, fta: 16,
+  orb: 10, drb: 25, tov: 12,
+  opp_fgm: 24, opp_fga: 58, opp_fg3m: 5, opp_fg3a: 15, opp_ftm: 12, opp_fta: 16,
+  opp_orb: 9,  opp_drb: 24, opp_tov: 13,
+}))
+
+const t2 = runTier2Pipeline(syntheticLogs, rates)
 assert(t2.synthetic === true, 'synthetic gameLogs flagged as synthetic=true')
 assert(t2.messages?.some(m => m.includes('SYNTHETIC')), 'synthetic warning message present')
 assert(t2.status === 'ok', 'synthetic data still runs (not hard-blocked)')
 
-// Verify synthetic data cannot silently pass as real
 const syntheticResult = t2.result
 assert(syntheticResult?.eventEPA !== undefined, 'synthetic result has eventEPA (for display)')
-// But the synthetic flag is always set — consumers must check it
 assert(t2.synthetic, 'synthetic flag always accessible on returned object')
 
 // ── 9. VIF diagnostics ────────────────────────────────────────────────────────
