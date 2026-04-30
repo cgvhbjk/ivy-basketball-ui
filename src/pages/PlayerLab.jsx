@@ -11,6 +11,7 @@ import GlossaryTooltip from '../components/shared/GlossaryTooltip.jsx'
 import PageHeader from '../components/shared/PageHeader.jsx'
 import Accordion from '../components/shared/Accordion.jsx'
 import PageConclusions from '../components/shared/PageConclusions.jsx'
+import MethodologyPanel from '../components/shared/MethodologyPanel.jsx'
 import { T, CARD, SEL, BTN } from '../styles/theme.js'
 import {
   parseHeightIn, classYearNum, broadPositionGroup,
@@ -393,7 +394,7 @@ export default function PlayerLab() {
     if (!player) return []
     return RADAR_DIMS.map(dim => {
       const { min, max } = norms[dim.key] ?? { min: 0, max: 1 }
-      return { axis: dim.label, Player: norm(player[dim.key], min, max, dim.higherBetter) }
+      return { axis: dim.label, Player: Math.max(0.05, norm(player[dim.key], min, max, dim.higherBetter)) }
     })
   }, [player, norms])
 
@@ -403,8 +404,8 @@ export default function PlayerLab() {
       const { min, max } = norms[dim.key] ?? { min: 0, max: 1 }
       return {
         axis: dim.label,
-        A: radarData[i]?.Player ?? 0,
-        B: comparePlayer ? norm(comparePlayer[dim.key], min, max, dim.higherBetter) : null,
+        A: radarData[i]?.Player ?? 0.05,
+        B: comparePlayer ? Math.max(0.05, norm(comparePlayer[dim.key], min, max, dim.higherBetter)) : null,
       }
     })
   }, [radarData, comparePlayer, norms])
@@ -414,7 +415,7 @@ export default function PlayerLab() {
     if (!comparePlayer) return []
     return RADAR_DIMS.map(dim => {
       const { min, max } = norms[dim.key] ?? { min: 0, max: 1 }
-      return { axis: dim.label, Player: norm(comparePlayer[dim.key], min, max, dim.higherBetter) }
+      return { axis: dim.label, Player: Math.max(0.05, norm(comparePlayer[dim.key], min, max, dim.higherBetter)) }
     })
   }, [comparePlayer, norms])
 
@@ -1012,6 +1013,30 @@ export default function PlayerLab() {
             text: `Closest NBA comp by height + position: ${nbaComparables[0].name} (${nbaComparables[0].round === 1 ? 'R1 #' : 'R2 #'}${nbaComparables[0].draft_pick}, ${nbaComparables[0].draft_year}) — ${inchesToFtIn(nbaComparables[0].height_in)}, ${nbaComparables[0].college_ppg?.toFixed(1) ?? '—'} ppg in college.`,
             color: T.accentSoft,
           } : null,
+          comparePlayer ? (() => {
+            const cats = [
+              { key: 'bpm',   hb: true  },
+              { key: 'ortg',  hb: true  },
+              { key: 'efg',   hb: true  },
+              { key: 'pts',   hb: true  },
+              { key: 'drtg',  hb: false },
+            ]
+            const aWins = cats.filter(({ key, hb }) => {
+              const a = player[key], b = comparePlayer[key]
+              return a != null && b != null && (hb ? a > b + 0.01 : a < b - 0.01)
+            }).length
+            const leader   = aWins >= 3 ? player.name : comparePlayer.name
+            const leaderCl = aWins >= 3 ? colorA : colorB
+            const bpmA     = player.bpm, bpmB = comparePlayer.bpm
+            const bpmNote  = bpmA != null && bpmB != null
+              ? ` BPM: ${(bpmA > 0 ? '+' : '') + bpmA.toFixed(2)} vs ${(bpmB > 0 ? '+' : '') + bpmB.toFixed(2)}.`
+              : ''
+            return {
+              label: 'Head-to-Head',
+              text: `${leader} leads across ${Math.max(aWins, cats.length - aWins)}/${cats.length} key categories (BPM, ORTG, eFG%, scoring, defense).${bpmNote} BPM is the most reliable single-number summary of overall impact — prioritize efficiency over volume when evaluating the comparison.`,
+              color: leaderCl,
+            }
+          })() : null,
         ].filter(Boolean)} />
       )}
 
@@ -1037,6 +1062,16 @@ export default function PlayerLab() {
               text: `${byBpm[0].pos} posts the highest Box Plus/Minus (${byBpm[0].bpm > 0 ? '+' : ''}${byBpm[0].bpm}), suggesting the greatest positive impact relative to replacement. ${byBpm[byBpm.length - 1].pos} (${byBpm[byBpm.length - 1].bpm > 0 ? '+' : ''}${byBpm[byBpm.length - 1].bpm} BPM) lags — a targeting insight for roster construction.`,
               color: T.amber,
             },
+            (() => {
+              const totalN = posBiodata.reduce((s, g) => s + g.n, 0)
+              const largest = [...posBiodata].sort((a, b) => b.n - a.n)[0]
+              const eFGSpread = (Math.max(...posBiodata.map(g => g.efg)) - Math.min(...posBiodata.map(g => g.efg))).toFixed(1)
+              return {
+                label: 'Roster Depth',
+                text: `${totalN} qualifying players across ${posBiodata.length} position types${posYear === 0 ? ' (2022–2025)' : ` in ${posYear}`}. ${largest.pos} is the deepest group (n=${largest.n}). eFG% spread across positions: ${eFGSpread}pp — ${parseFloat(eFGSpread) >= 5 ? 'a meaningful efficiency gap suggesting positional shooting imbalance' : 'positions are relatively balanced in shooting efficiency'}.`,
+                color: T.textMd,
+              }
+            })(),
           ]
         })()} />
       )}
@@ -1062,10 +1097,30 @@ export default function PlayerLab() {
             text: `${trainingPlan.length}-module ${broadPositionGroup(player.pos_type) ?? ''} program ordered by ${Object.values(combineInputs).some(v => v !== '') ? 'measured combine gaps' : 'standard positional priority'}. Enter combine test results above to personalise module order.`,
             color: T.accentSoft,
           })
+          const PRANK = { Critical: 0, High: 1, Medium: 2, Maintenance: 3 }
+          const phases = [...new Set(trainingPlan.map(r => r.phase))]
+          const dominantPhase = phases.reduce((best, ph) => {
+            const count = trainingPlan.filter(r => r.phase === ph && (PRANK[r.effectivePriority ?? r.priority] ?? 4) <= 1).length
+            return count > (best.count ?? 0) ? { phase: ph, count } : best
+          }, {})
+          if (dominantPhase.phase) items.push({
+            label: 'Phase Focus',
+            text: `${dominantPhase.phase} work carries the highest current priority for ${player.name}. Block dedicated sessions for this phase before adding accessory volume — quality over quantity at the ${broadPositionGroup(player.pos_type) ?? 'position'} level.`,
+            color: T.cyan,
+          })
           return items
         })()} />
       )}
 
+      <MethodologyPanel
+        howItWorks="Player Lab uses Barttorvik lineup-adjusted ratings (ORTG, DRTG) that account for teammate and opponent quality. True Shooting% captures all three scoring modes. Usage% measures offensive load. BPM estimates net points contributed per 100 possessions above an average player. NBA comparables are matched on height, position, and efficiency profile from the Barttorvik college database."
+        sections={[
+          { title: 'Player Efficiency', keys: ['ortg', 'drtg', 'efg', 'ts_pct', 'bpm', 'usg'] },
+          { title: 'Counting Stats',    keys: ['pts', 'treb', 'ast', 'stl', 'blk', 'min_pg'] },
+          { title: 'Advanced Rates',    keys: ['or_pct', 'ast_pct'] },
+          { title: 'Physical',          keys: ['avg_height_in', 'avg_experience'] },
+        ]}
+      />
       </div>{/* end inner padding wrapper */}
     </div>
   )

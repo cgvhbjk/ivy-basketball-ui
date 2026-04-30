@@ -21,6 +21,10 @@ function computeGameFactors(g) {
   const oPoss = estimatePossessions(g.opp_fga, g.opp_orb, g.opp_tov, g.opp_fta)
   if (g.fga === 0 || g.opp_fga === 0) return null
 
+  // Derive points from box score if not stored (ESPN API omits points from statistics array)
+  const pts     = g.pts     || (2 * g.fgm     + g.fg3m     + (g.ftm     ?? 0))
+  const opp_pts = g.opp_pts || (2 * g.opp_fgm + g.opp_fg3m + (g.opp_ftm ?? 0))
+
   const eFG_o = ((g.fgm + 0.5 * g.fg3m) / g.fga) * 100
   const tov_o = (g.tov / poss) * 100
   const orb_o = g.orb / (g.orb + (g.opp_drb || 1)) * 100
@@ -29,14 +33,14 @@ function computeGameFactors(g) {
   const tov_d = (g.opp_tov / oPoss) * 100
   const orb_d = g.opp_orb / (g.opp_orb + (g.drb || 1)) * 100
   const ftr_d = (g.opp_ftm / g.opp_fga) * 100
-  const netEff = ((g.pts / poss) - (g.opp_pts / oPoss)) * 100
+  const netEff = ((pts / poss) - (opp_pts / oPoss)) * 100
 
   const row = { eFG_o, tov_o, orb_o, ftr_o, eFG_d, tov_d, orb_d, ftr_d, netEff }
   const allFinite = Object.values(row).every(v => isFinite(v))
   return allFinite ? row : null
 }
 
-export function runTier2Pipeline(gameLogs, leagueRates, { ivyOnly = false } = {}) {
+export function runTier2Pipeline(gameLogs, leagueRates, { ivyOnly = false, baselineEP = null } = {}) {
   // Validate — this explicitly checks and flags synthetic data
   const validation = validateGameLogs(gameLogs, { ivyOnly })
 
@@ -66,7 +70,8 @@ export function runTier2Pipeline(gameLogs, leagueRates, { ivyOnly = false } = {}
 
   let model
   try {
-    model = fitRidgeCV(X, y, FEAT, { alphas: ALPHAS })
+    // Use 10-fold CV for game logs — LOO on 900 obs (6300 solves) is too slow
+    model = fitRidgeCV(X, y, FEAT, { alphas: ALPHAS, cvFolds: 10 })
   } catch (e) {
     return { status: 'error', synthetic: validation.synthetic, messages: [e.message], result: null }
   }
@@ -77,7 +82,7 @@ export function runTier2Pipeline(gameLogs, leagueRates, { ivyOnly = false } = {}
     def_eFG: model.beta[5], def_TOV: model.beta[6],
     def_ORB: model.beta[7], def_FTR: model.beta[8],
   }
-  const conv      = convertToEventEPA(coefficients, leagueRates)
+  const conv      = convertToEventEPA(coefficients, leagueRates, baselineEP, { modelVariant: 'joint' })
   const signIssues = checkSigns(model.beta, FEAT)
   const n = processed.length
 
@@ -102,6 +107,7 @@ export function runTier2Pipeline(gameLogs, leagueRates, { ivyOnly = false } = {}
       alpha:        model.bestAlpha,
       coefficients,
       eventEPA:     conv.values,
+      states:       conv.states,
       convMeta:     conv.meta,
       signIssues,
       observations,

@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { T, CARD } from '../../styles/theme.js'
+import { MODEL_LABELS } from '../../utils/epaModels/config.js'
+import ModelComparisonTable from './ModelComparisonTable.jsx'
 
 function Badge({ level, children }) {
   const colors = {
@@ -52,7 +54,10 @@ function VIFTable({ vif }) {
   )
 }
 
-export default function DiagnosticsPanel({ diagnostics, messages, selectionReason }) {
+export default function DiagnosticsPanel({
+  diagnostics, messages, selectionReason,
+  models, selectedModelKey, viewModelKey, onSelectModel,
+}) {
   const [open, setOpen] = useState(false)
 
   if (!diagnostics) return null
@@ -61,22 +66,50 @@ export default function DiagnosticsPanel({ diagnostics, messages, selectionReaso
   const hasWarnings = messages?.length > 0
   const vif = diagnostics.joint?.vif
 
+  const viewingKey  = viewModelKey ?? selectedModelKey
+  const modelLabel  = MODEL_LABELS[viewingKey] ?? viewingKey ?? '—'
+  const isAutoView  = !viewModelKey || viewModelKey === selectedModelKey
+  const rs          = models?.ridge_split
+  const cvSummary   = rs ? `Off CVR²=${rs.offCvR2} · Def CVR²=${rs.defCvR2}` : null
+
   return (
     <div style={{ ...CARD, marginBottom: 20, borderColor: hasWarnings ? T.amber : T.border }}>
       <button
         onClick={() => setOpen(o => !o)}
         style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}
       >
-        <Badge level={hasWarnings ? 'warn' : 'ok'}>
-          {hasWarnings ? `${messages.length} diagnostic warning${messages.length > 1 ? 's' : ''}` : 'Diagnostics OK'}
-        </Badge>
-        <span style={{ fontSize: 12, color: T.textMd, flex: 1, textAlign: 'left' }}>{selectionReason}</span>
-        <span style={{ fontSize: 11, color: T.textMin }}>{open ? '▲ collapse' : '▼ expand'}</span>
+        <span style={{ fontSize: 10, fontWeight: 700, color: T.textMin, letterSpacing: '0.07em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
+          Model Selection
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
+          <Badge level="info">{modelLabel}</Badge>
+          {isAutoView && <span style={{ fontSize: 10, color: T.textMin }}>auto-selected</span>}
+          {cvSummary && <span style={{ fontSize: 11, color: T.blue }}>{cvSummary}</span>}
+          {hasWarnings && <Badge level="warn">{messages.length} warning{messages.length > 1 ? 's' : ''}</Badge>}
+        </span>
+        <span style={{ fontSize: 11, color: T.textMin, whiteSpace: 'nowrap' }}>{open ? '▲ collapse' : '▼ details'}</span>
       </button>
 
       {open && (
         <div style={{ marginTop: 16 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: T.accentSoft, marginBottom: 8 }}>MODEL COMPARISON</div>
+          <p style={{ fontSize: 11, color: T.textLow, marginBottom: 8 }}>
+            Four models are fit to the same data. The pipeline auto-selects the best one based on CV R² and sign validity.
+            Click a row to view that model's coefficients and scatter plot in the card below.
+          </p>
+          <ModelComparisonTable
+            models={models}
+            selectedModel={selectedModelKey}
+            viewModelKey={viewModelKey}
+            onSelectModel={onSelectModel}
+          />
+
+          <div style={{ fontSize: 11, color: T.textLow, margin: '16px 0 8px', padding: '8px 10px', background: T.surf2, borderRadius: 5 }}>
+            <span style={{ fontWeight: 600, color: T.textMd }}>Why this model was auto-selected: </span>
+            {selectionReason ?? '—'}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginTop: 16 }}>
             <div>
               <div style={{ fontSize: 11, fontWeight: 600, color: T.accentSoft, marginBottom: 6 }}>SAMPLE SIZE</div>
               <Row label="Observations (n)"          value={n} />
@@ -95,8 +128,8 @@ export default function DiagnosticsPanel({ diagnostics, messages, selectionReaso
             </div>
           </div>
 
-          {messages?.length > 0 && (
-            <div>
+          {hasWarnings && (
+            <div style={{ marginTop: 16 }}>
               <div style={{ fontSize: 11, fontWeight: 600, color: T.amber, marginBottom: 6 }}>WARNINGS</div>
               {messages.map((m, i) => (
                 <div key={i} style={{ fontSize: 11, color: T.amber, background: T.amberBg, borderRadius: 4, padding: '5px 10px', marginBottom: 4 }}>

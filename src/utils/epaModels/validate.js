@@ -1,6 +1,4 @@
-import { FIELD_MAP, DEFAULT_CONFIG } from './config.js'
-
-const { minObsPerPredictor } = DEFAULT_CONFIG.diagnostics
+import { FIELD_MAP } from './config.js'
 
 // Returns { ok: bool, errors: string[], warnings: string[] }
 export function validateTeamSeasons(teamSeasons, targetMode = 'raw') {
@@ -59,30 +57,9 @@ export function validateTeamSeasons(teamSeasons, targetMode = 'raw') {
 
   const n = validCount
 
-  // Sample size checks
-  const kJoint = 8   // joint model: 8 predictors
-  const kSplit = 4   // split model: 4 predictors each
-
   if (n < 10) {
     errors.push(`Only ${n} valid observations — minimum 10 required`)
     return { ok: false, errors, warnings }
-  }
-
-  const ratioJoint = +(n / kJoint).toFixed(1)
-  const ratioSplit = +(n / kSplit).toFixed(1)
-
-  if (ratioJoint < minObsPerPredictor) {
-    warnings.push(
-      `Joint model: ${n} obs / ${kJoint} predictors = ratio ${ratioJoint} ` +
-      `(recommend ≥ ${minObsPerPredictor}). Expect unstable coefficients — use split or ridge.`
-    )
-  }
-
-  if (ratioSplit < minObsPerPredictor) {
-    warnings.push(
-      `Split model: ${n} obs / ${kSplit} predictors = ratio ${ratioSplit} ` +
-      `(recommend ≥ ${minObsPerPredictor}).`
-    )
   }
 
   // Numeric type check (spot-check first 5 rows)

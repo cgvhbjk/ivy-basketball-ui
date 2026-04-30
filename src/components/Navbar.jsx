@@ -7,6 +7,7 @@ const LINKS = [
   { to: '/insights',  label: 'Insights Lab'     },
   { to: '/players',   label: 'Player Lab'        },
   { to: '/epa',       label: 'EPA Lab'           },
+  { to: '/luck',      label: 'Luck Lab'          },
 ]
 
 export default function Navbar() {

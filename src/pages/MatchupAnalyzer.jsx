@@ -9,6 +9,7 @@ import StatCard from '../components/shared/StatCard.jsx'
 import PageHeader from '../components/shared/PageHeader.jsx'
 import Accordion from '../components/shared/Accordion.jsx'
 import PageConclusions from '../components/shared/PageConclusions.jsx'
+import MethodologyPanel from '../components/shared/MethodologyPanel.jsx'
 import { T } from '../styles/theme.js'
 import { getCoach } from '../data/coachMeta.js'
 import {
@@ -97,6 +98,52 @@ function NotablePlayerCard({ player, teamColor }) {
   )
 }
 
+function RadarTooltip({ active, payload, metaA, metaB, colorA, colorB }) {
+  if (!active || !payload?.length) return null
+  const d = payload[0]?.payload
+  if (!d || d.rawA == null && d.rawB == null) return null
+
+  const fmt = (key, val) => {
+    if (val == null) return '—'
+    const m = TEAM_METRIC_MAP[key]
+    return m?.fmt ? m.fmt(val) : val.toFixed(1)
+  }
+
+  const aWins = d.higherBetter === true
+    ? d.rawA > d.rawB
+    : d.higherBetter === false
+      ? d.rawA < d.rawB
+      : null
+
+  const EDGE = '#10b981'
+  const BASE = '#ebebeb'
+
+  return (
+    <div style={{ background: '#1a1a1a', border: '1px solid #3c3c3c', borderRadius: 8, padding: '10px 14px', fontSize: 12, minWidth: 170 }}>
+      <div style={{ fontWeight: 700, color: '#a5b4fc', marginBottom: 8 }}>{d.axis}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16 }}>
+          <span style={{ color: colorA, fontWeight: 600 }}>{metaA.abbr}</span>
+          <span style={{ color: aWins === true ? EDGE : BASE, fontWeight: aWins === true ? 700 : 400 }}>
+            {fmt(d.metricKey, d.rawA)}
+          </span>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16 }}>
+          <span style={{ color: colorB, fontWeight: 600 }}>{metaB.abbr}</span>
+          <span style={{ color: aWins === false ? EDGE : BASE, fontWeight: aWins === false ? 700 : 400 }}>
+            {fmt(d.metricKey, d.rawB)}
+          </span>
+        </div>
+      </div>
+      {aWins !== null && d.rawA != null && d.rawB != null && (
+        <div style={{ marginTop: 7, fontSize: 10, color: '#6b7280', borderTop: '1px solid #2c2c2c', paddingTop: 6 }}>
+          {aWins ? metaA.abbr : metaB.abbr} leads · {d.higherBetter ? 'higher is better' : 'lower is better'}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function MatchupAnalyzer() {
   const {
     analyzerTeamA, analyzerTeamB, analyzerYearA, analyzerYearB,
@@ -164,8 +211,12 @@ export default function MatchupAnalyzer() {
     const nB = norm(vB, ax.min, ax.max)
     return {
       axis: ax.label,
-      A: ax.higherBetter === false ? 1 - nA : nA,
-      B: ax.higherBetter === false ? 1 - nB : nB,
+      A: Math.max(0.05, ax.higherBetter === false ? 1 - nA : nA),
+      B: Math.max(0.05, ax.higherBetter === false ? 1 - nB : nB),
+      rawA: vA,
+      rawB: vB,
+      metricKey: ax.key,
+      higherBetter: ax.higherBetter,
     }
   }), [seasonA, seasonB])
 
@@ -195,6 +246,20 @@ export default function MatchupAnalyzer() {
       })
     }
 
+    // Defensive edge
+    if (seasonA.adjde != null && seasonB.adjde != null) {
+      const defDiff = seasonA.adjde - seasonB.adjde
+      if (Math.abs(defDiff) >= 2) {
+        const betterDef = defDiff < 0 ? metaA.abbr : metaB.abbr
+        const worseDef  = defDiff < 0 ? metaB.abbr : metaA.abbr
+        items.push({
+          label: 'Defense',
+          text: `${betterDef} holds opponents to ${Math.min(seasonA.adjde, seasonB.adjde).toFixed(1)} pts/100 (${worseDef}: ${Math.max(seasonA.adjde, seasonB.adjde).toFixed(1)}) — a ${Math.abs(defDiff).toFixed(1)}-pt defensive edge. ${worseDef} must create high-quality looks rather than relying on volume.`,
+          color: T.cyan,
+        })
+      }
+    }
+
     // Tempo battle
     const tempoDiff = (seasonA.tempo ?? 0) - (seasonB.tempo ?? 0)
     if (Math.abs(tempoDiff) >= 2) {
@@ -222,6 +287,35 @@ export default function MatchupAnalyzer() {
       })
     }
 
+    // Turnover battle
+    const tovAdvA    = (seasonA.tov_d ?? 0) - (seasonB.tov_o ?? 0)
+    const tovAdvB    = (seasonB.tov_d ?? 0) - (seasonA.tov_o ?? 0)
+    const netTovEdge = tovAdvA - tovAdvB
+    if (Math.abs(netTovEdge) >= 3 && seasonA.tov_d != null && seasonB.tov_d != null) {
+      const tovTeam  = netTovEdge > 0 ? metaA.abbr : metaB.abbr
+      const tovOpp   = netTovEdge > 0 ? metaB.abbr : metaA.abbr
+      const forceRate = (netTovEdge > 0 ? seasonA.tov_d : seasonB.tov_d).toFixed(1)
+      const oppRate   = (netTovEdge > 0 ? seasonB.tov_o : seasonA.tov_o)?.toFixed(1)
+      items.push({
+        label: 'Turnovers',
+        text: `${tovTeam} has the turnover edge — forcing ${forceRate}% TOs vs ${tovOpp}'s ${oppRate}% baseline. Ball security will likely decide swing possessions in the half-court.`,
+        color: T.amber,
+      })
+    }
+
+    // FT rate edge
+    if (seasonA.ftr_o != null && seasonB.ftr_o != null) {
+      const ftrDiff = seasonA.ftr_o - seasonB.ftr_o
+      if (Math.abs(ftrDiff) >= 5) {
+        const moreFT = ftrDiff > 0 ? metaA.abbr : metaB.abbr
+        items.push({
+          label: 'FT Attack',
+          text: `${moreFT} gets to the line at a ${Math.abs(ftrDiff).toFixed(0)}% higher rate. Drawing fouls is a key scoring mechanism — opponents must discipline closeouts and post defense to avoid bonus situations.`,
+          color: T.green,
+        })
+      }
+    }
+
     // Scheme clash
     items.push({
       label: 'Schemes',
@@ -246,8 +340,22 @@ export default function MatchupAnalyzer() {
       })
     }
 
+    // Bottom Line — always shown
+    const netEffA   = (seasonA.adjoe ?? 0) - (seasonA.adjde ?? 0)
+    const netEffB   = (seasonB.adjoe ?? 0) - (seasonB.adjde ?? 0)
+    const edgeTeam  = netEffA >= netEffB ? metaA.abbr : metaB.abbr
+    const edgeColor = netEffA >= netEffB ? colorA : colorB
+    const margin    = Math.abs(netEffA - netEffB).toFixed(1)
+    const probStr   = winPctA != null ? `${(Math.max(winPctA, 1 - winPctA) * 100).toFixed(0)}% win probability` : 'a net efficiency edge'
+    const swingLabels = items.filter(i => ['Pace','Shooting','Turnovers','FT Attack','Defense'].includes(i.label)).map(i => i.label.toLowerCase())
+    items.push({
+      label: 'Bottom Line',
+      text: `${edgeTeam} is the stronger team by ${margin} pts/100 net efficiency (${probStr}). ${swingLabels.length ? `Key swing factors: ${swingLabels.join(', ')}.` : 'This is a tightly matched contest where execution will outweigh statistical advantages.'}${crossYear ? ' ⚠ Cross-year projection — treat as directional.' : ''}`,
+      color: edgeColor,
+    })
+
     return items
-  }, [seasonA, seasonB, winPctA, metaA, metaB, netA, netB, schemeOffA, schemeOffB, schemeDefA, schemeDefB, posCompare, colorA, colorB])
+  }, [seasonA, seasonB, winPctA, metaA, metaB, netA, netB, schemeOffA, schemeOffB, schemeDefA, schemeDefB, posCompare, colorA, colorB, crossYear])
 
   return (
     <div style={{ background: T.bg, minHeight: '100vh' }}>
@@ -312,8 +420,8 @@ export default function MatchupAnalyzer() {
             {[
               { school: analyzerTeamA, year: analyzerYearA, coach: coachA, color: colorA, offScheme: schemeOffA, defScheme: schemeDefA, meta: metaA },
               { school: analyzerTeamB, year: analyzerYearB, coach: coachB, color: colorB, offScheme: schemeOffB, defScheme: schemeDefB, meta: metaB },
-            ].map(({ school, year, coach, color, offScheme, defScheme, meta }) => (
-              <div key={school} style={{ ...CARD }}>
+            ].map(({ school, year, coach, color, offScheme, defScheme, meta }, i) => (
+              <div key={i} style={{ ...CARD }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, borderBottom: '1px solid #2c2c2c', paddingBottom: 12 }}>
                   <TeamBadge school={school} size="md" showName={false} />
                   <div>
@@ -394,10 +502,7 @@ export default function MatchupAnalyzer() {
                   <PolarAngleAxis dataKey="axis" tick={{ fill: '#6b7280', fontSize: 11 }} />
                   <Radar name={metaA.abbr} dataKey="A" stroke={colorA} fill={colorA} fillOpacity={0.18} strokeWidth={2} />
                   <Radar name={metaB.abbr} dataKey="B" stroke={colorB} fill={colorB} fillOpacity={0.18} strokeWidth={2} />
-                  <Tooltip
-                    contentStyle={{ background: '#1a1a1a', border: '1px solid #2c2c2c', borderRadius: 8, fontSize: 12 }}
-                    formatter={v => [(v * 100).toFixed(0) + ' (normalized)', '']}
-                  />
+                  <Tooltip content={<RadarTooltip metaA={metaA} metaB={metaB} colorA={colorA} colorB={colorB} />} />
                 </RadarChart>
               </ResponsiveContainer>
               <div style={{ fontSize: 11, color: '#374151', textAlign: 'center', marginTop: 4 }}>
@@ -491,10 +596,10 @@ export default function MatchupAnalyzer() {
             {[
               { agg: posAggA, school: analyzerTeamA, year: analyzerYearA, color: colorA, meta: metaA },
               { agg: posAggB, school: analyzerTeamB, year: analyzerYearB, color: colorB, meta: metaB },
-            ].map(({ agg, school, year, color, meta }) => {
+            ].map(({ agg, school, year, color, meta }, i) => {
               const quality = dataQualityCheck(players, school, year)
               return (
-                <div key={school}>
+                <div key={i}>
                   <div style={{ fontSize: 13, fontWeight: 600, color, marginBottom: 12 }}>{meta.fullName} · {year}</div>
                   {quality.hasWarnings && (
                     <div style={{ marginBottom: 10, padding: '6px 10px', background: '#f59e0b11', border: '1px solid #f59e0b33', borderRadius: 6 }}>
@@ -587,8 +692,8 @@ export default function MatchupAnalyzer() {
           {[
             { school: analyzerTeamA, year: analyzerYearA, squad: squadA, color: colorA, meta: metaA, notable: notableA },
             { school: analyzerTeamB, year: analyzerYearB, squad: squadB, color: colorB, meta: metaB, notable: notableB },
-          ].map(({ school, squad, color, meta, year, notable }) => (
-            <div key={school}>
+          ].map(({ school, squad, color, meta, year, notable }, i) => (
+            <div key={i}>
               <div style={{ fontSize: 14, fontWeight: 700, color, marginBottom: 14 }}>
                 {meta.fullName} · {year}
               </div>
@@ -654,8 +759,8 @@ export default function MatchupAnalyzer() {
               {[
                 { team: analyzerTeamA, meta: metaA, color: colorA, coach: coachA, offScheme: schemeOffA, defScheme: schemeDefA },
                 { team: analyzerTeamB, meta: metaB, color: colorB, coach: coachB, offScheme: schemeOffB, defScheme: schemeDefB },
-              ].map(({ team, meta, color, coach, offScheme, defScheme }) => (
-                <div key={team}>
+              ].map(({ team, meta, color, coach, offScheme, defScheme }, i) => (
+                <div key={i}>
                   <div style={{ fontSize: 13, fontWeight: 600, color, marginBottom: 10 }}>{meta.abbr}</div>
                   <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 2 }}>Coach</div>
                   <div style={{ fontSize: 12, color: '#ebebeb', marginBottom: 8 }}>{coach.name}</div>
@@ -671,7 +776,17 @@ export default function MatchupAnalyzer() {
         </div>
       )}
 
-        <PageConclusions title="Matchup Conclusions" conclusions={conclusions} />
+        <PageConclusions title="Matchup Conclusions" conclusions={conclusions} prominent />
+
+        <MethodologyPanel
+          howItWorks="The Matchup Analyzer compares two teams across adjusted efficiency, four factors, and roster profiles. Win probability is estimated using a logistic function on the net efficiency differential. Scheme labels (pace, off/def style) are derived from four-factor and tempo thresholds calibrated to the Ivy League distribution."
+          sections={[
+            { title: 'Efficiency',   keys: ['adjoe', 'adjde', 'net_efficiency', 'barthag'] },
+            { title: 'Four Factors', keys: ['efg_o', 'efg_d', 'tov_o', 'tov_d', 'orb', 'drb', 'ftr_o', 'ftr_d'] },
+            { title: 'Shooting',     keys: ['three_pct_o', 'three_pct_d', 'three_rate_o', 'two_pct_o', 'two_pct_d', 'ft_pct'] },
+            { title: 'Pace',         keys: ['tempo'] },
+          ]}
+        />
       </div>{/* end inner padding wrapper */}
     </div>
   )

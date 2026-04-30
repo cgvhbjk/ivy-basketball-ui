@@ -12,6 +12,7 @@ import GlossaryTooltip from '../components/shared/GlossaryTooltip.jsx'
 import PageHeader from '../components/shared/PageHeader.jsx'
 import Accordion from '../components/shared/Accordion.jsx'
 import PageConclusions from '../components/shared/PageConclusions.jsx'
+import MethodologyPanel from '../components/shared/MethodologyPanel.jsx'
 import { T } from '../styles/theme.js'
 import {
   computeRelationship, scoreInsight, timeWindowComparison,
@@ -144,8 +145,8 @@ function CorrelationPanel() {
               </div>
             ))}
             <button
-              style={{ ...BTN(valid), padding: '6px 16px', fontSize: 12, opacity: valid ? 1 : 0.4, cursor: valid ? 'pointer' : 'not-allowed', marginLeft: 'auto' }}
-              onClick={handleSave} disabled={!valid}>
+              style={{ ...BTN(true), padding: '6px 16px', fontSize: 12, marginLeft: 'auto' }}
+              onClick={handleSave}>
               Save Insight
             </button>
           </div>
@@ -228,13 +229,16 @@ function CorrelationPanel() {
         </div>
 
         <div style={{ ...CARD, marginTop: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: '#a5b4fc' }}>Style Interaction</div>
             <div style={{ display: 'flex', gap: 6 }}>
               {STYLE_KEYS.map(sk => (
                 <button key={sk.key} style={BTN(styleKey === sk.key)} onClick={() => setStyleKey(sk.key)}>{sk.label}</button>
               ))}
             </div>
+          </div>
+          <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 12, lineHeight: 1.55 }}>
+            Does the X→Y relationship change based on playing style? Each bucket splits teams by {STYLE_KEYS.find(s => s.key === styleKey)?.label ?? styleKey} and re-computes the correlation. A big difference between buckets means the relationship is style-dependent — e.g., it may hold for uptempo teams but not slow ones.
           </div>
           <div style={{ display: 'flex', gap: 12 }}>
             {styleInteractions.map(b => (
@@ -250,7 +254,10 @@ function CorrelationPanel() {
         </div>
 
         <div style={{ ...CARD, marginTop: 16 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: '#a5b4fc', marginBottom: 12 }}>Stability Over Time</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#a5b4fc', marginBottom: 6 }}>Stability Over Time</div>
+          <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 12, lineHeight: 1.55 }}>
+            Is this relationship consistent across seasons, or is it recent noise? The same correlation is re-computed over two time windows. If both r-values are similar, the pattern is reliable. If they diverge, the earlier or later window may be the outlier — check for rule changes or roster shifts.
+          </div>
           <div style={{ display: 'flex', gap: 16 }}>
             {windows.map(w => (
               <div key={w.label} style={{ flex: 1, textAlign: 'center' }}>
@@ -312,6 +319,18 @@ function CorrelationPanel() {
         text: `r = ${windows[0].r.toFixed(2)} in ${windows[0].label} vs ${windows[1].r.toFixed(2)} in ${windows[1].label} — ${Math.abs(windows[0].r - windows[1].r) < 0.15 ? 'relationship is stable across eras' : 'pattern has shifted — recent seasons may tell a different story'}.`,
         color: '#a5b4fc',
       } : null,
+      {
+        label: 'Coaching Use',
+        text: (() => {
+          const pred = xMeta?.label ?? xVar
+          const outcome = yMeta?.label ?? yVar
+          if (!valid) return `${pred} shows no reliable predictive relationship with ${outcome} in this dataset. Look for confounding factors or explore sub-group interactions via Style Interaction.`
+          if (Math.abs(correlation) >= 0.55) return `Strong signal — directly prioritize ${pred} in roster construction and scheme design. Each unit of improvement is meaningfully associated with ${outcome} outcomes.`
+          if (Math.abs(correlation) >= 0.35) return `Moderate signal — treat ${pred} as a supporting scouting filter alongside efficiency metrics. Investigate outliers in the scatter to find teams where the relationship breaks down.`
+          return `Weak-to-moderate signal — ${pred} partially explains ${outcome} variance but should not be used as a standalone decision driver. Pair with additional context.`
+        })(),
+        color: valid ? (Math.abs(correlation) >= 0.55 ? '#10b981' : '#f59e0b') : '#6b7280',
+      },
     ].filter(Boolean)} />
     </>
   )
@@ -388,7 +407,6 @@ function SchemeHalf({ title, schemeType, metrics, defaultMetric, colors, descrip
       <div style={CARD}>
         <ResponsiveContainer width="100%" height={200}>
           <BarChart data={data} margin={{ top: 4, right: 8, bottom: 52, left: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2c2c2c" />
             <XAxis dataKey="scheme" tick={{ fill: '#6b7280', fontSize: 9 }} angle={-25} textAnchor="end" interval={0} />
             <YAxis tick={{ fill: '#6b7280', fontSize: 10 }} domain={['auto', 'auto']} width={44} />
             <Tooltip
@@ -497,7 +515,7 @@ function SchemeCombinedCard({ school, years }) {
         <div style={{ paddingTop: 10, borderTop: `1px solid ${T.border}`,
           marginBottom: years.length > 1 ? 12 : 0, display: 'flex', gap: 16 }}>
           {[
-            ['Win%',  (avgSeason.win_pct * 100).toFixed(0) + '%'],
+            ['Ivy Win%', (() => { const r = archetypeLeagueWinRates[combinedArch.archetype]; return r ? `${r.avg}% (n=${r.n})` : '—' })()],
             ['AdjOE', avgSeason.adjoe?.toFixed(1)],
             ['AdjDE', avgSeason.adjde?.toFixed(1)],
             ['PPP',   avgSeason.ppp?.toFixed(1)],
@@ -546,7 +564,7 @@ function SchemeCombinedCard({ school, years }) {
 function SchemeClassifierPanel() {
   const { saveScheme } = useInsightStore()
   const [school,       setSchool]       = useState('yale')
-  const [activeYears,  setActiveYears]  = useState(new Set([2025]))
+  const [activeYears,  setActiveYears]  = useState(new Set([2022, 2023, 2024, 2025]))
 
   function toggleYear(y) {
     setActiveYears(prev => {
@@ -716,6 +734,17 @@ function SchemePanel() {
             text: `${defData[0].scheme} defenses average the best win rate (${(defData[0].avgWinPct * 100).toFixed(0)}%, n=${defData[0].n}). ${defData[defData.length-1].scheme} teams struggle most (${(defData[defData.length-1].avgWinPct * 100).toFixed(0)}%) — likely a talent correlate, not solely a scheme effect.`,
             color: '#a5b4fc',
           } : null,
+          (() => {
+            const offWinRates = offData.map(s => s.avgWinPct ?? 0)
+            const spread = offWinRates.length >= 2 ? ((Math.max(...offWinRates) - Math.min(...offWinRates)) * 100).toFixed(0) : null
+            const bestOff = offData[0], bestDef = defData[0]
+            if (!spread || !bestOff || !bestDef) return null
+            return {
+              label: 'Combined Edge',
+              text: `Teams running ${bestOff.scheme} offense AND ${bestDef.scheme} defense represent the optimal scheme combination in recent Ivy data. The offensive win-rate spread across schemes is ${spread} percentage points — scheme identity matters, but talent within the scheme matters more.`,
+              color: '#10b981',
+            }
+          })(),
           {
             label: 'Context',
             text: 'Scheme classification uses season-level tempo, 3-pt rate, TOV%, block%, and eFG% allowed. Individual team snapshots use the Roster Classifier above for a roster-composition view.',
@@ -800,6 +829,21 @@ const MATCHUP_Y_METRICS = [
 ]
 
 const rosterAggsWeighted     = buildRosterAggregatesWeighted(players)
+
+// League-wide average win% by archetype across all 32 team-seasons
+const archetypeLeagueWinRates = (() => {
+  const result = {}
+  for (const ts of teamSeasons) {
+    const squad = players.filter(p => p.school === ts.school && p.year === ts.year)
+    const arch  = computeTeamArchetype(squad, ts).archetype
+    if (!result[arch]) result[arch] = { total: 0, n: 0 }
+    result[arch].total += ts.win_pct ?? 0
+    result[arch].n++
+  }
+  return Object.fromEntries(
+    Object.entries(result).map(([k, { total, n }]) => [k, { avg: +(total / n * 100).toFixed(0), n }])
+  )
+})()
 const archetypeMatchupData   = computeArchetypeMatchupMatrix(teamSeasons, players, games)
 const positionPhysicalImpact = computePositionPhysicalImpact(games, players)
 const gameMatchupDataset     = buildGameMatchupDataset(games, players)
@@ -1111,6 +1155,16 @@ export default function InsightsLab() {
       {tab === 'schemes'     && <SchemePanel />}
       {tab === 'biodata'     && <RosterBioPanel />}
 
+      <MethodologyPanel
+        howItWorks="Insights Lab computes Pearson correlations between team-season metrics and win%, surfaces statistically significant relationships, and scores each insight by sample size and effect size. Scheme classification uses four-factor and tempo thresholds calibrated to Ivy League distributions. Biodata analysis tests whether physical roster attributes (height, experience, position mix) correlate with performance outcomes."
+        sections={[
+          { title: 'Efficiency',        keys: ['adjoe', 'adjde', 'net_efficiency', 'barthag'] },
+          { title: 'Four Factors',      keys: ['efg_o', 'efg_d', 'tov_o', 'tov_d', 'orb', 'drb', 'ftr_o', 'ftr_d'] },
+          { title: 'Shooting',          keys: ['three_pct_o', 'three_pct_d', 'three_rate_o', 'two_pct_o', 'two_pct_d', 'ft_pct'] },
+          { title: 'Roster Attributes', keys: ['avg_height_in', 'avg_experience', 'pct_guards', 'pct_forwards', 'pct_bigs'] },
+          { title: 'Record',            keys: ['win_pct', 'conf_win_pct'] },
+        ]}
+      />
       </div>{/* end inner padding wrapper */}
     </div>
   )

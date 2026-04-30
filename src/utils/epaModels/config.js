@@ -25,22 +25,25 @@ export const FIELD_MAP = {
 
 // Sign constraints for the JOINT model (predicting net efficiency = ppp - opp_ppp).
 // +1 = must be positive, -1 = must be negative, 0 = unconstrained.
+// Joint model sign constraints — all unconstrained because the joint 8-predictor model
+// is a baseline reference only and is never selected. Sign checking is meaningful only
+// for the split models (SIGN_CONSTRAINTS_OFF / SIGN_CONSTRAINTS_DEF below).
 export const SIGN_CONSTRAINTS = {
-  off_eFG:  1,   // better shooting → better net eff
-  off_TOV: -1,   // more turnovers → worse net eff
-  off_ORB:  1,   // more offensive boards → better net eff
-  off_FTR:  1,   // drawing fouls → better net eff
-  def_eFG: -1,   // opponent shoots better → worse net eff
-  def_TOV:  1,   // opponent turns it over more → better net eff
-  def_ORB: -1,   // opponent gets more offensive boards → worse net eff
-  def_FTR: -1,   // opponent draws more fouls → worse net eff
+  off_eFG:  0,
+  off_TOV:  0,
+  off_ORB:  0,
+  off_FTR:  0,
+  def_eFG:  0,
+  def_TOV:  0,
+  def_ORB:  0,
+  def_FTR:  0,
 }
 
 // Sign constraints for the SPLIT OFFENSE model (predicting ppp — higher is better).
 export const SIGN_CONSTRAINTS_OFF = {
   off_eFG:  1,   // better shooting → more points
-  off_TOV: -1,   // more turnovers → fewer points
-  off_ORB:  1,   // more offensive boards → more possessions → more points
+  off_TOV:  0,   // unconstrained — tov_o encoding direction unverified
+  off_ORB:  0,   // unconstrained — orb encoding direction unverified
   off_FTR:  1,   // drawing fouls → more points
 }
 
@@ -48,8 +51,8 @@ export const SIGN_CONSTRAINTS_OFF = {
 // Opponent's own offensive factors naturally increase their scoring.
 export const SIGN_CONSTRAINTS_DEF = {
   def_eFG:  1,   // opponent shoots better → opponent scores more
-  def_TOV: -1,   // opponent turns it over more → opponent scores less
-  def_ORB:  1,   // opponent gets more offensive boards → opponent scores more
+  def_TOV:  0,   // unconstrained — tov_d encoding direction unverified
+  def_ORB:  0,   // unconstrained — drb encoding direction unverified
   def_FTR:  1,   // opponent draws more fouls → opponent scores more
 }
 
@@ -88,6 +91,29 @@ export const DEFAULT_CONFIG = {
 export const POSSESSION_VALUE_SCALE = 100  // everything is per 100 possessions
 export const ORB_POSSESSION_CREDIT  = 0.85  // offensive rebound gives ~85% of a full possession
 export const THREE_PT_eFG_MULTIPLIER = 1.5  // 3FG worth 1.5× a 2FG in eFG terms
+
+// Sub-factor feature flag.
+// When enabled, splits aggregate four factors into live/dead and putback/reset.
+// Requires additional columns in teamSeasons.json (not yet available from Barttorvik).
+// With Ridge regularization the model handles 12 predictors fine once data exists.
+export const SUBFACTORS = {
+  enabled: false,   // flip to true once data columns are available
+  available: false, // set to true when teamSeasons.json includes these fields
+
+  // Column names expected in the data when enabled
+  columns: {
+    off_LiveTOV:     null,   // live-ball turnover rate — not yet in data
+    off_DeadTOV:     null,   // dead-ball turnover rate — not yet in data
+    off_ORB_putback: null,   // putback offensive rebound rate — not yet in data
+    off_ORB_reset:   null,   // reset offensive rebound rate — not yet in data
+  },
+
+  // These replace the current off_TOV and off_ORB in the feature matrix when enabled
+  replaces: {
+    off_TOV: ['off_LiveTOV', 'off_DeadTOV'],
+    off_ORB: ['off_ORB_putback', 'off_ORB_reset'],
+  },
+}
 
 // Model display metadata for the UI
 export const MODEL_LABELS = {

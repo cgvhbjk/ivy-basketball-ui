@@ -22,7 +22,7 @@ function AlphaBadge({ alpha }) {
   return <span style={{ color: T.blue }}>λ={alpha}</span>
 }
 
-export default function ModelComparisonTable({ models, selectedModel }) {
+export default function ModelComparisonTable({ models, selectedModel, viewModelKey, onSelectModel }) {
   if (!models) return null
 
   const rows = [
@@ -34,6 +34,8 @@ export default function ModelComparisonTable({ models, selectedModel }) {
         : null },
     { key: 'constrained_ols', cvR2: null,                         alpha: null },
   ]
+
+  const viewing = viewModelKey ?? selectedModel
 
   return (
     <div style={{ overflowX: 'auto' }}>
@@ -59,7 +61,8 @@ export default function ModelComparisonTable({ models, selectedModel }) {
                 </td>
               </tr>
             )
-            const isSelected = key === selectedModel
+            const isAutoSelected = key === selectedModel
+            const isViewing      = key === viewing
             const r2    = key === 'ridge_split' ? `Off:${m.offModel?.r2} Def:${m.defModel?.r2}` : m.r2
             const rmse  = key === 'ridge_split' ? `Off:${m.offModel?.rmse} Def:${m.defModel?.rmse}` : m.rmse
             const signs = m.signIssues?.length ?? '—'
@@ -68,16 +71,29 @@ export default function ModelComparisonTable({ models, selectedModel }) {
               : (m.cvR2 != null ? m.cvR2 : '—')
 
             return (
-              <tr key={key} style={{ borderBottom: `1px solid ${T.border}20`, background: isSelected ? `${T.accent}0e` : 'transparent' }}>
-                <td style={{ padding: '7px 10px', fontSize: 12, color: isSelected ? T.accentSoft : T.text, fontWeight: isSelected ? 600 : 400 }}>
+              <tr
+                key={key}
+                onClick={() => onSelectModel?.(key)}
+                style={{
+                  borderBottom: `1px solid ${T.border}20`,
+                  background: isViewing ? `${T.accent}14` : 'transparent',
+                  cursor: onSelectModel ? 'pointer' : 'default',
+                }}
+              >
+                <td style={{ padding: '7px 10px', fontSize: 12, color: isViewing ? T.accentSoft : T.text, fontWeight: isViewing ? 600 : 400 }}>
                   {MODEL_LABELS[key]}
-                  {isSelected && <span style={{ marginLeft: 6, fontSize: 10, color: T.accentSoft }}>← selected</span>}
+                  {isAutoSelected && (
+                    <span style={{ marginLeft: 6, fontSize: 10, color: T.textMin, fontWeight: 400 }}>auto</span>
+                  )}
+                  {isViewing && !isAutoSelected && (
+                    <span style={{ marginLeft: 6, fontSize: 10, color: T.accentSoft }}>← viewing</span>
+                  )}
                 </td>
-                <Cell highlight={isSelected}>{cvVal}</Cell>
-                <Cell highlight={isSelected}>{r2}</Cell>
-                <Cell highlight={isSelected}>{rmse}</Cell>
-                <Cell highlight={isSelected}><SignBadge count={typeof signs === 'number' ? signs : 0} /></Cell>
-                <Cell highlight={isSelected}>
+                <Cell highlight={isViewing}>{cvVal}</Cell>
+                <Cell highlight={isViewing}>{r2}</Cell>
+                <Cell highlight={isViewing}>{rmse}</Cell>
+                <Cell highlight={isViewing}><SignBadge count={typeof signs === 'number' ? signs : 0} /></Cell>
+                <Cell highlight={isViewing}>
                   {alphaParts
                     ? <span style={{ color: T.blue, fontSize: 11 }}>{alphaParts}</span>
                     : <AlphaBadge alpha={m.bestAlpha ?? alpha} />}
@@ -89,6 +105,7 @@ export default function ModelComparisonTable({ models, selectedModel }) {
       </table>
       <p style={{ fontSize: 10, color: T.textMin, marginTop: 6 }}>
         LOO-CV R²: leave-one-out cross-validated (out-of-sample). In-sample R² will always be higher — do not use it to compare models.
+        {onSelectModel && ' Click a row to view that model\'s coefficients and scatter plot.'}
       </p>
     </div>
   )

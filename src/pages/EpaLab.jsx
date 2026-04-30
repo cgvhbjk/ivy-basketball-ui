@@ -1,16 +1,18 @@
-import { useMemo } from 'react'
+import { useMemo, useEffect, useState } from 'react'
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts'
-import teamSeasons from '../data/teamSeasons.json'
-import gameLogs    from '../data/gameLogs.json'
+import teamSeasons  from '../data/teamSeasons.json'
+import gameLogs     from '../data/gameLogs.json'
+import baselineEP   from '../data/baseline_epa.json'
 import { runEPAPipeline } from '../utils/epaModels/pipeline.js'
 import { runTier2Pipeline } from '../utils/epaModels/tier2.js'
 import useEpaStore from '../store/useEpaStore.js'
 import PageHeader from '../components/shared/PageHeader.jsx'
 import DiagnosticsPanel from '../components/epa/DiagnosticsPanel.jsx'
-import ModelComparisonTable from '../components/epa/ModelComparisonTable.jsx'
+import PageConclusions from '../components/shared/PageConclusions.jsx'
+import MethodologyPanel from '../components/shared/MethodologyPanel.jsx'
 import { T, CARD, BTN } from '../styles/theme.js'
 
 // ── Shared sub-components ─────────────────────────────────────────────────────
@@ -30,7 +32,7 @@ function EpaPill({ value }) {
   )
 }
 
-const EVENT_ROWS = [
+const EVENT_ROWS_FULL = [
   { key: 'made2FG',            label: 'Made 2-pt FG'           },
   { key: 'made3FG',            label: 'Made 3-pt FG'           },
   { key: 'offTurnover',        label: 'Offensive Turnover'     },
@@ -40,20 +42,24 @@ const EVENT_ROWS = [
   { key: 'defShotSuppression', label: 'Shot Suppression (def)' },
 ]
 
+const EVENT_ROWS_T1 = EVENT_ROWS_FULL.filter(r => r.key !== 'offTurnover' && r.key !== 'offRebound')
+
 const COEFF_META = [
-  { key: 'off_eFG', label: 'Off eFG%',  note: 'shooting quality' },
-  { key: 'off_TOV', label: 'Off TOV',   note: 'tov_o (directional encoding unclear in Barttorvik)' },
-  { key: 'off_ORB', label: 'Off ORB',   note: 'orb (directional encoding unclear in Barttorvik)' },
-  { key: 'off_FTR', label: 'Off FTR',   note: 'free throw rate' },
-  { key: 'def_eFG', label: 'Def eFG%',  note: 'opponent shooting quality' },
-  { key: 'def_TOV', label: 'Def TOV',   note: 'tov_d (directional encoding unclear in Barttorvik)' },
-  { key: 'def_ORB', label: 'Def ORB',   note: 'drb (directional encoding unclear in Barttorvik)' },
-  { key: 'def_FTR', label: 'Def FTR',   note: 'opponent free throw rate' },
+  { key: 'off_eFG', label: 'Off eFG%',  note: 'shooting quality',                             uncertain: false },
+  { key: 'off_TOV', label: 'Off TOV',   note: 'tov_o — sign unreliable at n=32; unconstrained models give wrong sign', uncertain: true  },
+  { key: 'off_ORB', label: 'Off ORB',   note: 'orb — sign unreliable at n=32; unconstrained models give wrong sign',   uncertain: true  },
+  { key: 'off_FTR', label: 'Off FTR',   note: 'free throw rate',                               uncertain: false },
+  { key: 'def_eFG', label: 'Def eFG%',  note: 'opponent shooting quality',                     uncertain: false },
+  { key: 'def_TOV', label: 'Def TOV',   note: 'tov_d — sign unreliable at n=32; unconstrained models give wrong sign', uncertain: true  },
+  { key: 'def_ORB', label: 'Def ORB',   note: 'drb — sign unreliable at n=32; unconstrained models give wrong sign',   uncertain: true  },
+  { key: 'def_FTR', label: 'Def FTR',   note: 'opponent free throw rate',                      uncertain: false },
 ]
 
-function EventEPATable({ epa }) {
+function EventEPATable({ epa, full = false }) {
   if (!epa) return <div style={{ color: T.textMin, fontSize: 12 }}>No EPA values</div>
+  const rows = full ? EVENT_ROWS_FULL : EVENT_ROWS_T1
   return (
+    <div>
     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
       <thead>
         <tr style={{ borderBottom: `1px solid ${T.border}` }}>
@@ -62,7 +68,7 @@ function EventEPATable({ epa }) {
         </tr>
       </thead>
       <tbody>
-        {EVENT_ROWS.map(({ key, label }) => (
+        {rows.map(({ key, label }) => (
           <tr key={key} style={{ borderBottom: `1px solid ${T.border}20` }}>
             <td style={{ padding: '7px 0', color: T.textMd }}>{label}</td>
             <td style={{ padding: '7px 0', textAlign: 'right' }}>
@@ -72,6 +78,10 @@ function EventEPATable({ epa }) {
         ))}
       </tbody>
     </table>
+    <div style={{ fontSize: 10, color: T.textMin, marginTop: 8 }}>
+      EPA from sign-constrained model (NNLS). TOV and ORB effects omitted — unreliable at n=32 due to collinearity with eFG%. See Tier 2 for n=900 estimates.
+    </div>
+    </div>
   )
 }
 
@@ -81,7 +91,8 @@ function CoeffTable({ coefficients }) {
     <div>
       <p style={{ fontSize: 11, color: T.textLow, marginBottom: 10 }}>
         β_eFG of 1.2 means a 1% increase in eFG% adds 1.2 pts of net efficiency per 100 possessions.
-        Fields marked "encoding unclear" have ambiguous direction in Barttorvik data; constrained model zeros these out.
+        Fields marked <span style={{ color: T.amber }}>?</span> have unreliable signs at n=32 — even unconstrained models produce wrong-signed coefficients for TOV/ORB due to correlation with eFG%.
+        Use Tier 2 (n=900) for stable estimates of these factors.
       </p>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
         <thead>
@@ -92,11 +103,14 @@ function CoeffTable({ coefficients }) {
           </tr>
         </thead>
         <tbody>
-          {COEFF_META.map(({ key, label, note }) => {
+          {COEFF_META.map(({ key, label, note, uncertain }) => {
             const val = coefficients[key]
             return (
               <tr key={key} style={{ borderBottom: `1px solid ${T.border}20` }}>
-                <td style={{ padding: '6px 0', color: T.textMd }}>{label}</td>
+                <td style={{ padding: '6px 0', color: uncertain ? T.amber : T.textMd }}>
+                  {label}
+                  {uncertain && <span style={{ fontSize: 10, marginLeft: 5, opacity: 0.7 }}>?</span>}
+                </td>
                 <td style={{ padding: '6px 6px', textAlign: 'right', fontFamily: 'monospace', color: T.text }}>
                   {val != null ? val.toFixed(4) : '—'}
                 </td>
@@ -144,11 +158,138 @@ function ScatterViz({ observations, r2, n, label }) {
   )
 }
 
-function TierCard({ badge, tier, result, activeComparison, observations, synthetic }) {
+function StatRow({ label, base, delta, combined, note, children }) {
+  return (
+    <div style={{ borderBottom: `1px solid ${T.border}20`, paddingBottom: 12, marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{label}</span>
+        {combined != null && (
+          <EpaPill value={combined} />
+        )}
+      </div>
+      <div style={{ display: 'flex', gap: 16, fontSize: 11, color: T.textLow, flexWrap: 'wrap' }}>
+        {base != null    && <span>Base <span style={{ color: T.textMd, fontFamily: 'monospace' }}>{base > 0 ? '+' : ''}{base.toFixed(3)}</span></span>}
+        {delta != null   && <span>Δ <span style={{ color: delta === 0 ? T.textMin : T.accentSoft, fontFamily: 'monospace' }}>{delta > 0 ? '+' : ''}{delta.toFixed(3)}</span></span>}
+        {note && <span style={{ color: T.textMin, fontStyle: 'italic' }}>{note}</span>}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function StateBreakdown({ pct1, label1, ep1, pct2, label2, ep2 }) {
+  return (
+    <div style={{ display: 'flex', gap: 12, marginTop: 5 }}>
+      {[{ pct: pct1, label: label1, ep: ep1 }, { pct: pct2, label: label2, ep: ep2 }].map(({ pct, label, ep }) => (
+        <div key={label} style={{
+          flex: 1, background: T.surf2, borderRadius: 5, padding: '5px 8px', fontSize: 11,
+        }}>
+          <div style={{ color: T.textLow, marginBottom: 2 }}>{label}</div>
+          <div style={{ color: T.text, fontFamily: 'monospace', fontWeight: 600 }}>EP {ep?.toFixed(2)}</div>
+          <div style={{ color: T.textMin }}>{(pct * 100).toFixed(0)}% of cases</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function StateEPAPanel({ states, deltaNote }) {
+  if (!states) {
+    return (
+      <div style={{ fontSize: 12, color: T.textMin, padding: '10px 0' }}>
+        State context not available — baseline_epa.json not loaded or states not computed.
+      </div>
+    )
+  }
+  const { offTurnover, offRebound, foulDrawn, defForcedTurnover } = states
+  return (
+    <div>
+      {deltaNote && (
+        <div style={{ fontSize: 11, color: T.amber, background: T.amberBg, borderRadius: 5, padding: '6px 10px', marginBottom: 14 }}>
+          {deltaNote}
+        </div>
+      )}
+
+      <StatRow
+        label="Offensive Turnover"
+        base={offTurnover?.weightedOpponentEP}
+        delta={offTurnover?.regressionDelta}
+        combined={offTurnover?.combined != null ? -offTurnover.combined : null}
+        note={offTurnover?.note}
+      >
+        {offTurnover && (
+          <StateBreakdown
+            pct1={offTurnover.liveSteal.pct}    label1={offTurnover.liveSteal.label}  ep1={offTurnover.liveSteal.ep}
+            pct2={offTurnover.deadBall.pct}     label2={offTurnover.deadBall.label}   ep2={offTurnover.deadBall.ep}
+          />
+        )}
+        {offTurnover?.ivyPremium != null && (
+          <div style={{ fontSize: 11, color: T.textLow, marginTop: 5 }}>
+            Ivy live-steal premium: <span style={{ color: T.red, fontFamily: 'monospace' }}>+{offTurnover.ivyPremium.toFixed(3)}</span> vs dead ball
+          </div>
+        )}
+      </StatRow>
+
+      <StatRow
+        label="Offensive Rebound"
+        base={offRebound?.weightedYourEP}
+        delta={offRebound?.regressionDelta}
+        combined={offRebound?.combined}
+        note={offRebound?.note}
+      >
+        {offRebound && (
+          <StateBreakdown
+            pct1={offRebound.putback.pct}  label1={offRebound.putback.label}  ep1={offRebound.putback.ep}
+            pct2={offRebound.reset.pct}    label2={offRebound.reset.label}    ep2={offRebound.reset.ep}
+          />
+        )}
+      </StatRow>
+
+      <StatRow
+        label="Foul Drawn (FT)"
+        base={foulDrawn?.weightedYourEP}
+        note={foulDrawn?.note}
+      >
+        {foulDrawn && (
+          <StateBreakdown
+            pct1={foulDrawn.twoShots.pct}    label1={foulDrawn.twoShots.label}    ep1={foulDrawn.twoShots.ep}
+            pct2={foulDrawn.oneAndOne.pct}   label2={foulDrawn.oneAndOne.label}   ep2={foulDrawn.oneAndOne.ep}
+          />
+        )}
+      </StatRow>
+
+      <StatRow
+        label="Forced Turnover (def)"
+        base={defForcedTurnover?.weightedYourEP}
+        delta={defForcedTurnover?.regressionDelta}
+        combined={defForcedTurnover?.combined}
+        note={defForcedTurnover?.note}
+      >
+        {defForcedTurnover && (
+          <StateBreakdown
+            pct1={defForcedTurnover.liveSteal.pct}  label1="Live steal transition"  ep1={defForcedTurnover.liveSteal.ep}
+            pct2={defForcedTurnover.deadBall.pct}   label2="Dead ball inbound"       ep2={defForcedTurnover.deadBall.ep}
+          />
+        )}
+      </StatRow>
+
+      <div style={{ fontSize: 11, color: T.textMin, marginTop: 4 }}>
+        Combined = Base (state EP from baseline_epa.json) + Δ (regression coefficient normalized to per-possession scale).
+        Positive = gain to your team. Negative = cost to your team.
+      </div>
+    </div>
+  )
+}
+
+function TierCard({ badge, description, tier, result, activeComparison, observations, synthetic, epaOverride, statesOverride, fullEvents = false }) {
   if (!result) return (
     <div style={{ ...CARD, marginBottom: 20 }}>
-      <div style={{ fontSize: 12, color: T.textMin }}>
-        {badge}: Game log data not loaded. Run: <code style={{ color: T.amber }}>node scripts/generate-mock-gamelogs.mjs</code>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+        <span style={{ background: T.accent + '22', color: T.accentSoft, borderRadius: 4, padding: '2px 8px', fontSize: 11, fontWeight: 700 }}>{badge}</span>
+        <span style={{ fontSize: 12, color: T.textMin }}>No game log data loaded.</span>
+      </div>
+      <div style={{ fontSize: 11, color: T.textMin }}>
+        Fetch real ESPN box scores: <code style={{ color: T.accentSoft }}>node scripts/fetch-gamelogs.mjs</code>
       </div>
     </div>
   )
@@ -161,9 +302,9 @@ function TierCard({ badge, tier, result, activeComparison, observations, synthet
   const r = result.result ?? result
   return (
     <div style={{ ...CARD, marginBottom: 20 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
         <span style={{ background: T.accent + '22', color: T.accentSoft, borderRadius: 4, padding: '2px 8px', fontSize: 11, fontWeight: 700 }}>{badge}</span>
-        <span style={{ fontSize: 12, color: T.textMd }}>{r.label ?? tier}</span>
+        <span style={{ fontSize: 12, color: T.text, fontWeight: 600 }}>{r.label ?? tier}</span>
         {r.r2 != null && <span style={{ fontSize: 11, color: T.textLow }}>R²={r.r2}</span>}
         {r.cvR2 != null && <span style={{ fontSize: 11, color: T.blue }}>CVR²={r.cvR2}</span>}
         {r.rmse != null && <span style={{ fontSize: 11, color: T.textLow }}>RMSE={r.rmse}</span>}
@@ -172,46 +313,72 @@ function TierCard({ badge, tier, result, activeComparison, observations, synthet
           <span style={{ background: T.amberBg, color: T.amber, borderRadius: 4, padding: '2px 7px', fontSize: 10, fontWeight: 600 }}>SYNTHETIC</span>
         )}
       </div>
+      {description && (
+        <div style={{ fontSize: 11, color: T.textLow, marginBottom: 12 }}>{description}</div>
+      )}
       {synthetic && (
         <div style={{ fontSize: 11, color: T.amber, marginBottom: 12 }}>
-          Synthetic game data — not validated. Replace gameLogs.json with real Barttorvik per-game box scores.
+          Synthetic game data — not validated. Replace gameLogs.json with real ESPN box scores.
         </div>
       )}
-      {activeComparison === 'events'       && <EventEPATable  epa={r.eventEPA} />}
+      {activeComparison === 'events'       && <EventEPATable  epa={epaOverride ?? r.eventEPA} full={fullEvents} />}
       {activeComparison === 'coefficients' && <CoeffTable     coefficients={r.coefficients} />}
-      {activeComparison === 'scatter'      && <ScatterViz     observations={observations ?? r.observations} r2={r.r2} n={r.n} label={r.label} />}
+      {activeComparison === 'scatter'      && <ScatterViz     observations={r.observations ?? observations} r2={r.r2} n={r.n} label={r.label} />}
+      {activeComparison === 'state'        && <StateEPAPanel  states={statesOverride ?? r.states} deltaNote={(statesOverride ?? r.states)?._deltaNote} />}
     </div>
   )
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-const TABS = ['events', 'coefficients', 'scatter']
+const TABS = ['events', 'coefficients', 'scatter', 'state']
 
 export default function EpaLab() {
-  const { ivyOnly, activeComparison, setIvyOnly, setActiveComparison } = useEpaStore()
+  const { ivyOnly, activeComparison, setIvyOnly, setActiveComparison,
+          tier1Result, tier2Result, setTier1Result, setTier2Result } = useEpaStore()
 
+  // User-chosen model to view (null = auto-selected by pipeline)
+  const [viewModelKey, setViewModelKey] = useState(null)
+
+  // Compute Tier 1 once and cache in store — survives navigation
   const pipeline = useMemo(() => {
-    try { return runEPAPipeline(teamSeasons, { targetMode: 'raw' }) }
-    catch (e) { return { status: 'error', messages: [e.message], models: null } }
-  }, [])
+    if (tier1Result) return tier1Result
+    try {
+      const result = runEPAPipeline(teamSeasons, { targetMode: 'raw', baselineEP })
+      setTier1Result(result)
+      return result
+    } catch (e) { return { status: 'error', messages: [e.message], models: null } }
+  }, [tier1Result])
 
+  // Compute Tier 2 when ivyOnly changes; cache result keyed by ivyOnly flag
+  const tier2CacheKey = `ivyOnly=${ivyOnly}`
   const tier2 = useMemo(() => {
+    if (tier2Result?.cacheKey === tier2CacheKey) return tier2Result.data
     if (!gameLogs?.length) return null
-    try { return runTier2Pipeline(gameLogs, pipeline.leagueRates ?? {}, { ivyOnly }) }
-    catch (e) { return { status: 'error', messages: [e.message] } }
-  }, [ivyOnly, pipeline.leagueRates])
+    try {
+      const data = runTier2Pipeline(gameLogs, pipeline.leagueRates ?? {}, { ivyOnly, baselineEP })
+      setTier2Result({ cacheKey: tier2CacheKey, data })
+      return data
+    } catch (e) { return { status: 'error', messages: [e.message] } }
+  }, [ivyOnly, pipeline.leagueRates, tier2Result])
 
-  const sel  = pipeline.selectedModel
-  const best = pipeline.models?.[sel]
+  const sel              = pipeline.selectedModel
+  const effectiveKey     = viewModelKey ?? sel
+  const effectiveModel   = pipeline.models?.[effectiveKey]
+
+  // Tier 2 description
+  const t2Result   = tier2?.result ?? tier2
+  const t2n        = t2Result?.n
+  const t2IvyLabel = ivyOnly ? ' · Ivy-vs-Ivy only' : ' · all opponents'
+  const tier2Desc  = `Per-game box scores${t2IvyLabel} · n=${t2n ?? '—'} · ESPN · 2022–25. Ridge regression on Dean Oliver four factors.`
 
   return (
     <div style={{ background: T.bg, minHeight: '100vh' }}>
       <PageHeader
         title="EPA Lab"
-        subtitle="Derives event EPA from OLS/Ridge regression on four-factor data. Model selected by LOO-CV — no assumed weights."
+        subtitle="Derives event EPA from regression on Dean Oliver four factors (eFG%, TOV%, ORB%, FTR). Two data tiers: season aggregates and per-game box scores."
         stats={pipeline.status !== 'error' ? [
-          { label: 'Model',     value: sel?.replace('_', ' ') ?? '—', color: T.accentSoft },
+          { label: 'Model',     value: sel?.replace(/_/g, ' ') ?? '—', color: T.accentSoft },
           { label: 'Off CVR²',  value: pipeline.models?.ridge_split?.offCvR2 ?? '—', color: T.green },
           { label: 'Def CVR²',  value: pipeline.models?.ridge_split?.defCvR2 ?? '—', color: T.green },
           { label: 'FGA/100',   value: pipeline.leagueRates?.avgFGAp100 ?? '—', color: T.textMd },
@@ -243,30 +410,51 @@ export default function EpaLab() {
                 diagnostics={pipeline.diagnostics}
                 messages={pipeline.messages}
                 selectionReason={pipeline.selectionReason}
+                models={pipeline.models}
+                selectedModelKey={sel}
+                viewModelKey={viewModelKey}
+                onSelectModel={setViewModelKey}
               />
-
-              <div style={{ ...CARD, marginBottom: 20 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: T.accentSoft, marginBottom: 12 }}>MODEL COMPARISON</div>
-                <ModelComparisonTable models={pipeline.models} selectedModel={sel} />
-              </div>
 
               <TierCard
                 badge="TIER 1"
-                tier="Team-season (real data)"
-                result={best}
+                description={`Season aggregates · n=${pipeline.n ?? '—'} · Barttorvik · 2022–25. Coefficients and scatter show the ${effectiveKey?.replace(/_/g, ' ') ?? '—'} model. Event EPA always from sign-constrained model.`}
+                tier="Team-season"
+                result={effectiveModel}
                 activeComparison={activeComparison}
                 observations={pipeline.observations}
                 synthetic={false}
+                epaOverride={pipeline.selectedEventEPA}
+                statesOverride={pipeline.selectedStates}
               />
             </>
         }
 
         <TierCard
           badge="TIER 2"
+          description={tier2Desc}
           tier="Game logs"
           result={tier2}
           activeComparison={activeComparison}
           synthetic={tier2?.synthetic}
+          fullEvents
+        />
+
+        <PageConclusions prominent conclusions={[
+          { label: 'What EPA measures', color: T.accentSoft, text: 'EPA (Expected Points Added) converts regression coefficients from the Dean Oliver four-factor model into intuitive per-event values. A made 2-pt FG adds ~2.36 pts of net efficiency per 100 possessions. These are not assumed weights — they are estimated from Ivy League game data.' },
+          { label: 'Why TOV/ORB are omitted in Tier 1', color: T.amber, text: 'With only n=32 Ivy team-seasons, TOV% and ORB% are sufficiently correlated with eFG% that all models — including unconstrained ridge — produce wrong-signed coefficients for those two factors. The constrained model correctly zeroes them. Tier 2 (n=900 game rows) produces more reliable estimates.' },
+          { label: 'Model selection logic', color: T.blue, text: 'Four models are fit: OLS, Ridge joint, Ridge split (offense/defense separate), and Constrained OLS (NNLS with theory-correct sign constraints). The pipeline auto-selects by LOO-CV R² and sign validity. EPA event values always come from the constrained model to ensure correct sign direction.' },
+          { label: 'Tier 1 vs Tier 2', color: T.green, text: 'Tier 1 uses season-aggregate four-factor data (Barttorvik, 2022–25). Tier 2 uses per-game box scores from the ESPN API for the same 8 schools and seasons. Tier 2 has 28× more observations, better isolates game-level variance, and gives reliable TOV/ORB estimates.' },
+        ]} />
+
+        <MethodologyPanel
+          howItWorks="The EPA pipeline fits ridge regression (with cross-validated regularization) to predict net efficiency from the four Dean Oliver factors. Coefficients are then scaled to per-event units using a league-average FGA/100 denominator derived from the scoring identity: PPP = FGA_p100 × (2·eFG + FT%·FTR)."
+          sections={[
+            { title: 'Four Factors',  keys: ['efg_o', 'efg_d', 'tov_o', 'tov_d', 'orb', 'drb', 'ftr_o', 'ftr_d'] },
+            { title: 'Efficiency',    keys: ['adjoe', 'adjde', 'net_efficiency', 'barthag'] },
+            { title: 'EPA Events',    keys: ['epa_made2fg', 'epa_made3fg', 'epa_foul_drawn', 'epa_forced_tov', 'epa_shot_supp'] },
+            { title: 'Model Quality', keys: ['ridge_cv_r2'] },
+          ]}
         />
       </div>
     </div>

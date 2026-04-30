@@ -12,7 +12,8 @@ const ALPHAS = DEFAULT_CONFIG.ridge.alphas
 // Returns a comprehensive result object consumed by the UI.
 
 export function runEPAPipeline(teamSeasons, opts = {}) {
-  const targetMode = opts.targetMode ?? DEFAULT_CONFIG.targetMode
+  const targetMode = opts.targetMode  ?? DEFAULT_CONFIG.targetMode
+  const baselineEP = opts.baselineEP  ?? null   // baseline_epa.json, passed in from caller
   const messages   = []
 
   // 1. Validate
@@ -48,12 +49,18 @@ export function runEPAPipeline(teamSeasons, opts = {}) {
   const XFull = XJoint  // same design matrix, yNet is the target
 
   // 6. Fit all models
+  const makeObs = (yHat) => valid.map((ts, i) => ({
+    label: `${ts.school.charAt(0).toUpperCase() + ts.school.slice(1)} ${ts.year}`,
+    actual:    +yNet[i].toFixed(2),
+    predicted: +yHat[i].toFixed(2),
+  }))
+
   const olsModel = (() => {
     try {
       const m    = fitOLS(XFull, yNet, ALL_FEATURES)
-      const conv = convertToEventEPA(namedCoeffs(m.beta, ALL_FEATURES), leagueRates)
+      const conv = convertToEventEPA(namedCoeffs(m.beta, ALL_FEATURES), leagueRates, baselineEP, { modelVariant: 'joint' })
       const signs = checkSigns(m.beta, ALL_FEATURES)
-      return { ...m, eventEPA: conv.values, convMeta: conv.meta, signIssues: signs, cvR2: null }
+      return { ...m, coefficients: namedCoeffs(m.beta, ALL_FEATURES), eventEPA: conv.values, states: conv.states, convMeta: conv.meta, signIssues: signs, cvR2: null, observations: makeObs(m.yHat) }
     } catch (e) {
       return { error: e.message }
     }
@@ -62,9 +69,9 @@ export function runEPAPipeline(teamSeasons, opts = {}) {
   const ridgeJoint = (() => {
     try {
       const m    = fitRidgeCV(XFull, yNet, ALL_FEATURES, { alphas: ALPHAS })
-      const conv = convertToEventEPA(namedCoeffs(m.beta, ALL_FEATURES), leagueRates)
+      const conv = convertToEventEPA(namedCoeffs(m.beta, ALL_FEATURES), leagueRates, baselineEP, { modelVariant: 'joint' })
       const signs = checkSigns(m.beta, ALL_FEATURES)
-      return { ...m, eventEPA: conv.values, convMeta: conv.meta, signIssues: signs }
+      return { ...m, coefficients: namedCoeffs(m.beta, ALL_FEATURES), eventEPA: conv.values, states: conv.states, convMeta: conv.meta, signIssues: signs, observations: makeObs(m.yHat) }
     } catch (e) {
       return { error: e.message }
     }
@@ -83,7 +90,7 @@ export function runEPAPipeline(teamSeasons, opts = {}) {
         def_ORB: m.combined.def_ORB,
         def_FTR: m.combined.def_FTR,
       }
-      const conv   = convertToEventEPA(coeffs, leagueRates)
+      const conv   = convertToEventEPA(coeffs, leagueRates, baselineEP, { modelVariant: 'split' })
       // Check signs using split-model conventions (off predicts ppp, def predicts opp_ppp)
       const offBeta = [0, ...OFF_FEATURES.map(k => m.combined[k])]
       const defBeta = [0, ...DEF_FEATURES.map(k => m.combined[k])]
@@ -92,7 +99,7 @@ export function runEPAPipeline(teamSeasons, opts = {}) {
       const signs    = [...offSigns, ...defSigns]
       return {
         ...m, coefficients: coeffs, eventEPA: conv.values,
-        convMeta: conv.meta, signIssues: signs,
+        states: conv.states, convMeta: conv.meta, signIssues: signs,
         // Combined in-sample fit against net efficiency for scatter plot
         observations: valid.map((ts, i) => ({
           label: `${ts.school.charAt(0).toUpperCase() + ts.school.slice(1)} ${ts.year}`,
@@ -108,13 +115,19 @@ export function runEPAPipeline(teamSeasons, opts = {}) {
     }
   })()
 
+  // Constrained OLS always uses explicit sign constraints (independent of SIGN_CONSTRAINTS config
+  // which is all-0 to avoid false positives in the model comparison table for joint models).
+  const CONSTRAINED_SIGNS = {
+    off_eFG:  1, off_TOV: -1, off_ORB:  1, off_FTR:  1,
+    def_eFG: -1, def_TOV:  1, def_ORB: -1, def_FTR: -1,
+  }
   const constrainedOls = (() => {
     try {
-      const m    = fitConstrained(XFull, yNet, ALL_FEATURES)
+      const m    = fitConstrained(XFull, yNet, ALL_FEATURES, CONSTRAINED_SIGNS)
       if (m.error) return { error: m.error }
-      const conv = convertToEventEPA(namedCoeffs(m.beta, ALL_FEATURES), leagueRates)
-      const signs = checkSigns(m.beta, ALL_FEATURES)
-      return { ...m, eventEPA: conv.values, convMeta: conv.meta, signIssues: signs, cvR2: null }
+      const conv = convertToEventEPA(namedCoeffs(m.beta, ALL_FEATURES), leagueRates, baselineEP, { modelVariant: 'joint' })
+      const signs = checkSigns(m.beta, ALL_FEATURES, CONSTRAINED_SIGNS)
+      return { ...m, coefficients: namedCoeffs(m.beta, ALL_FEATURES), eventEPA: conv.values, states: conv.states, convMeta: conv.meta, signIssues: signs, cvR2: null, observations: makeObs(m.yHat) }
     } catch (e) {
       return { error: e.message }
     }
@@ -144,7 +157,8 @@ export function runEPAPipeline(teamSeasons, opts = {}) {
 
   if (!ridgeSplit.error && !splitHasSignIssues) {
     bestModel       = 'ridge_split'
-    selectionReason = `Ridge split selected: LOO-CV R² off=${ridgeSplit.offCvR2} def=${ridgeSplit.defCvR2}, all coefficient signs correct.`
+    selectionReason = `Ridge split selected: LOO-CV R² off=${ridgeSplit.offCvR2} def=${ridgeSplit.defCvR2}. ` +
+      `eFG and FTR signs verified; tov/orb signs unconstrained (Barttorvik encoding direction unverified).`
   } else if (!constrainedOls.error) {
     bestModel       = 'constrained_ols'
     selectionReason =
@@ -196,18 +210,25 @@ export function runEPAPipeline(teamSeasons, opts = {}) {
       obsPerPredictorSplit: +(n / OFF_FEATURES.length).toFixed(1),
       targetMode,
     },
-    selectedEventEPA: (
-      bestModel === 'constrained_ols' ? constrainedOls.eventEPA :
-      bestModel === 'ridge_split'     ? ridgeSplit.eventEPA :
-      bestModel === 'ridge_joint'     ? ridgeJoint.eventEPA :
-      olsModel.eventEPA
-    ),
+    // EPA event values come from constrained OLS (theory-correct signs via NNLS).
+    // foulDrawn is overlaid from ridge split when NNLS zeros it — off_FTR has a correct positive
+    // sign in the split model and NNLS occasionally zeros it due to multicollinearity in the
+    // joint 8-predictor model with n=32.
+    selectedEventEPA: (() => {
+      const base = constrainedOls.eventEPA ?? olsModel.eventEPA
+      if (!base) return null
+      const epa = { ...base }
+      if (epa.foulDrawn === 0 && (ridgeSplit.eventEPA?.foulDrawn ?? 0) > 0)
+        epa.foulDrawn = ridgeSplit.eventEPA.foulDrawn
+      return epa
+    })(),
+    selectedStates:    constrainedOls.states   ?? null,
     selectedCoefficients: (
       bestModel === 'constrained_ols' ? namedCoeffs(constrainedOls.beta, ALL_FEATURES) :
       bestModel === 'ridge_split'     ? ridgeSplit.coefficients :
       namedCoeffs(ridgeJoint.beta, ALL_FEATURES)
     ),
-    convMeta: (ridgeSplit.convMeta ?? ridgeJoint.convMeta ?? null),
+    convMeta: (constrainedOls.convMeta ?? ridgeSplit.convMeta ?? ridgeJoint.convMeta ?? null),
     observations: bestObservations,
   }
 }

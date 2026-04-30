@@ -1,0 +1,62 @@
+{
+  "_source": "NCAA D1 basketball analytics estimates (Kubatko et al., adjusted for Ivy League pace/style). Calibrate to Ivy-specific play-by-play once available.",
+  "_unit": "Expected points scored by the possession-holding team from this game state",
+  "_ivy_note": "Ivy League values skew slightly lower than D1 average (less athleticism, fewer transition buckets). These are conservative estimates.",
+
+  "possession_states": {
+    "half_court_set":           { "ep": 0.90, "label": "Half-court set possession",      "note": "League-average half-court possession value" },
+    "transition_live_steal":    { "ep": 1.45, "label": "Transition — live ball steal",   "note": "Opponent has numbers advantage; higher EP than half-court" },
+    "transition_def_rebound":   { "ep": 1.05, "label": "Transition — defensive rebound", "note": "Outlet pass opportunity; slightly above half-court" },
+    "dead_ball_inbound":        { "ep": 0.90, "label": "Dead ball inbound",              "note": "Opponent sets defense; same as half-court set" },
+    "putback_attempt":          { "ep": 1.18, "label": "Offensive rebound — putback",    "note": "Close-range attempt in crowd; high conversion rate" },
+    "reset_possession":         { "ep": 0.87, "label": "Offensive rebound — reset",      "note": "ORB retreated to perimeter; slightly below fresh half-court" },
+    "foul_drawn_two_shots":     { "ep": 1.30, "label": "Two free throws",                "note": "Based on ~72% Ivy FT% (2 × 0.72 = 1.44, minus possession risk)" },
+    "foul_drawn_one_and_one":   { "ep": 0.96, "label": "One-and-one",                   "note": "Based on ~72% Ivy FT% (0.72 + 0.72² = 1.24 pts, minus risk)" }
+  },
+
+  "event_state_map": {
+    "_note": "Maps each Four Factor event to the possession states it typically creates for each team",
+
+    "offTurnover": {
+      "live_pct":    0.37,
+      "dead_pct":    0.63,
+      "live_state":  "transition_live_steal",
+      "dead_state":  "dead_ball_inbound",
+      "source_state": "half_court_set",
+      "interpretation": "37% of turnovers are live-ball steals; 63% dead ball. Weighted opponent EP = 1.12."
+    },
+    "offRebound": {
+      "putback_pct":  0.42,
+      "reset_pct":    0.58,
+      "putback_state": "putback_attempt",
+      "reset_state":   "reset_possession",
+      "source_state":  "half_court_set",
+      "interpretation": "42% of ORBs lead to immediate putback attempts; 58% reset. Weighted own EP = 1.00."
+    },
+    "defForcedTurnover": {
+      "live_pct":    0.37,
+      "dead_pct":    0.63,
+      "live_state":  "transition_live_steal",
+      "dead_state":  "dead_ball_inbound",
+      "source_state": "half_court_set",
+      "interpretation": "Mirror of offTurnover — live steals give your team transition; dead balls give half-court."
+    },
+    "foulDrawn": {
+      "two_shot_pct":       0.55,
+      "one_and_one_pct":    0.30,
+      "and_one_pct":        0.15,
+      "primary_state":      "foul_drawn_two_shots",
+      "secondary_state":    "foul_drawn_one_and_one",
+      "interpretation": "~55% two-shot fouls, ~30% one-and-one. Weighted EP ~1.14."
+    }
+  },
+
+  "ivy_league_averages": {
+    "_note": "Computed from 2022-2025 teamSeasons.json",
+    "ppp":               1.026,
+    "opp_ppp":           1.026,
+    "tempo_per_game":    68.5,
+    "ft_pct":            0.713,
+    "live_tov_share":    0.37
+  }
+}
