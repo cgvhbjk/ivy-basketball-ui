@@ -22,9 +22,12 @@ import {
   classifySchemeFromRoster, computeTeamArchetype, ARCHETYPES,
   computeArchetypeMatchupMatrix, computePositionPhysicalImpact,
   buildGameMatchupDataset, computeGameMatchupRelationship,
+  benjaminiHochberg,
+  clusterTeamSchemes, validateClustersAgainstCoachMeta,
 } from '../utils/insightEngine.js'
 import games from '../data/games.json'
 import { getCoach } from '../data/coachMeta.js'
+import { localCache } from '../utils/cache.js'
 
 const SEL = { background: '#1a1a1a', border: '1px solid #2c2c2c', color: '#ebebeb', borderRadius: 6, padding: '6px 10px', fontSize: 13 }
 const BTN = (active, color = '#4f46e5') => ({
@@ -42,6 +45,10 @@ function ConfidencePill({ confidence }) {
     </span>
   )
 }
+
+// Format Pearson r for display, including the case where r is null because
+// the sample was too small or had zero variance.
+const fmtR = (r, digits = 3) => r == null ? '—' : r.toFixed(digits)
 
 const STYLE_KEYS = [
   { key: 'three_rate_o', label: '3-Point Rate' },
@@ -71,13 +78,23 @@ function CorrelationPanel() {
   const { xVar, yVar, yearRange, savedInsights, setXVar, setYVar, saveInsight, removeInsight } = useInsightStore()
   const [styleKey, setStyleKey]   = useState('three_rate_o')
   const [searchTerm, setSearchTerm] = useState('')
+  const [controlForYear, setControlForYear] = useState(false)
 
-  const { points, correlation, n } = useMemo(() =>
-    computeRelationship(enrichedSeasons, xVar, yVar, { yearRange })
+  const { points, correlation, n, ciLow, ciHigh, pValue } = useMemo(() =>
+    localCache('computeRelationship',
+      `${xVar}|${yVar}|${yearRange.join(',')}|cy=${controlForYear}`,
+      () => computeRelationship(enrichedSeasons, xVar, yVar, { yearRange, controlForYear }))
+  , [xVar, yVar, yearRange, controlForYear])
+
+  const { valid, confidence, reason } = useMemo(() =>
+    scoreInsight(correlation, n, { pValue, ciLow, ciHigh }),
+    [correlation, n, pValue, ciLow, ciHigh]
+  )
+  const threshold         = useMemo(() =>
+    localCache('detectThreshold',
+      `${xVar}|${yVar}|${yearRange.join(',')}`,
+      () => detectThreshold(enrichedSeasons, xVar, yVar, yearRange))
   , [xVar, yVar, yearRange])
-
-  const { valid, confidence, reason } = useMemo(() => scoreInsight(correlation, n), [correlation, n])
-  const threshold         = useMemo(() => detectThreshold(enrichedSeasons, xVar, yVar, yearRange), [xVar, yVar, yearRange])
   const windows           = useMemo(() => timeWindowComparison(enrichedSeasons, xVar, yVar), [xVar, yVar])
   const styleInteractions = useMemo(() => detectStyleInteractions(enrichedSeasons, xVar, yVar, styleKey), [xVar, yVar, styleKey])
 
@@ -144,8 +161,16 @@ function CorrelationPanel() {
                 </select>
               </div>
             ))}
+            <label
+              title="Subtract per-year mean of X and Y before correlating. Removes shared league-wide year-to-year drift so the r reflects within-year team-to-team variation."
+              style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#9ca3af', cursor: 'pointer', marginLeft: 'auto' }}>
+              <input type="checkbox" checked={controlForYear}
+                onChange={e => setControlForYear(e.target.checked)}
+                style={{ accentColor: '#4f46e5' }} />
+              Control for year drift
+            </label>
             <button
-              style={{ ...BTN(true), padding: '6px 16px', fontSize: 12, marginLeft: 'auto' }}
+              style={{ ...BTN(true), padding: '6px 16px', fontSize: 12 }}
               onClick={handleSave}>
               Save Insight
             </button>
@@ -179,10 +204,25 @@ function CorrelationPanel() {
         </div>
 
         <div style={CARD}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
-            <span style={{ fontSize: 18, fontWeight: 700, color: '#ebebeb' }}>r = {correlation.toFixed(3)}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 18, fontWeight: 700, color: '#ebebeb' }}>r = {fmtR(correlation, 3)}</span>
             <ConfidencePill confidence={confidence} />
             <span style={{ fontSize: 12, color: '#6b7280' }}>n = {n} team-seasons</span>
+            {ciLow != null && ciHigh != null && (
+              <span style={{ fontSize: 11, color: '#6b7280' }}>
+                95% CI [{ciLow.toFixed(2)}, {ciHigh.toFixed(2)}]
+              </span>
+            )}
+            {pValue != null && (
+              <span style={{ fontSize: 11, color: pValue < 0.05 ? '#10b981' : pValue < 0.10 ? '#f59e0b' : '#6b7280' }}>
+                p = {pValue.toFixed(3)}
+              </span>
+            )}
+            {controlForYear && (
+              <span title="Within-year demeaning applied" style={{ fontSize: 10, color: '#a5b4fc', fontWeight: 600, letterSpacing: '0.04em' }}>
+                YEAR-CONTROLLED
+              </span>
+            )}
             {!valid && reason && <span style={{ fontSize: 12, color: '#ef4444' }}>({reason})</span>}
           </div>
           <div style={{ display: 'flex', gap: 20, marginBottom: 16 }}>
@@ -289,7 +329,7 @@ function CorrelationPanel() {
                     onClick={() => removeInsight(ins.id)}>×</button>
                 </div>
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: '#ebebeb' }}>r = {ins.correlation.toFixed(2)}</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#ebebeb' }}>r = {fmtR(ins.correlation, 2)}</span>
                   <ConfidencePill confidence={ins.confidence} />
                 </div>
                 <div style={{ fontSize: 11, color: '#6b7280' }}>{ins.text}</div>
@@ -689,9 +729,99 @@ function SavedSchemes() {
   )
 }
 
+// ── Empirical cluster panel (Phase 4 #2) ────────────────────────────────────
+// Runs k-means on team-seasons, picks k by silhouette, validates against
+// coachMeta playstyle text. Sits alongside the heuristic SchemeHalf panels —
+// not a replacement, a comparison. The agreement rate is a soft check (the
+// coachMeta text is sparse + free-form), so the takeaway should be qualitative.
+
+function ClusterSchemesPanel() {
+  const cluster = useMemo(() =>
+    clusterTeamSchemes(teamSeasons, { ks: [3, 4, 5], seed: 11 }),
+    []
+  )
+  const validation = useMemo(() =>
+    validateClustersAgainstCoachMeta(cluster, getCoach),
+    [cluster]
+  )
+
+  if (!cluster.k) {
+    return null
+  }
+
+  // Group rows for display
+  const byCluster = {}
+  for (const r of validation.rows) {
+    if (!byCluster[r.cluster]) byCluster[r.cluster] = []
+    byCluster[r.cluster].push(r)
+  }
+  const clusterIds = Object.keys(byCluster).map(Number).sort((a, b) =>
+    (byCluster[b].length ?? 0) - (byCluster[a].length ?? 0)
+  )
+
+  const fmtRate = r => r == null ? '—' : `${(r * 100).toFixed(0)}%`
+
+  return (
+    <div style={{ ...CARD, marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: '#10b981', letterSpacing: '0.06em' }}>EMPIRICAL</span>
+        <span style={{ fontSize: 14, fontWeight: 600, color: '#ebebeb' }}>
+          k-means clusters · k={cluster.k} (silhouette {cluster.silhouette.toFixed(2)})
+        </span>
+        <span style={{ fontSize: 11, color: '#6b7280' }}>
+          k-sweep: {Object.entries(cluster.scoresByK).map(([k, s]) => `${k}=${s.toFixed(2)}`).join(' · ')}
+        </span>
+      </div>
+      <div style={{ fontSize: 12, color: '#9ca3af', lineHeight: 1.55, marginBottom: 14, maxWidth: 760 }}>
+        Clusters team-seasons in z-scored {cluster.features.join(', ')} space. Cluster labels are derived from
+        each centroid's most extreme features (in standard deviations). The "agreement rate" is a soft check
+        against free-text playstyle in coachMeta — not pass/fail, just whether descriptive keywords overlap
+        (e.g., a "Fast" cluster matches when the coach text contains "fast"/"transition"/"push").
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+        <thead>
+          <tr>
+            <th style={TBL_HDR}>Cluster</th>
+            <th style={TBL_HDR}>Members</th>
+            <th style={{ ...TBL_HDR, textAlign: 'right' }}>n</th>
+            <th style={{ ...TBL_HDR, textAlign: 'right' }}>Agreement</th>
+            <th style={TBL_HDR}>Centroid (raw)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {clusterIds.map(cid => {
+            const rows = byCluster[cid]
+            const label = cluster.labelMap[cid]
+            const v = validation.byCluster[cid] ?? { agreementRate: null }
+            const centroid = cluster.centroidsRaw[cid]
+            const memberStr = rows
+              .map(r => `${(r.school.charAt(0).toUpperCase() + r.school.slice(1))} '${String(r.year).slice(2)}`)
+              .join(', ')
+            return (
+              <tr key={cid}>
+                <td style={{ ...TBL_CELL, fontWeight: 600, color: '#ebebeb' }}>{label}</td>
+                <td style={{ ...TBL_CELL, color: '#9ca3af', maxWidth: 320 }}>{memberStr}</td>
+                <td style={{ ...TBL_CELL, textAlign: 'right', color: '#6b7280' }}>{rows.length}</td>
+                <td style={{ ...TBL_CELL, textAlign: 'right', color: v.agreementRate != null && v.agreementRate >= 0.5 ? '#10b981' : '#f59e0b' }}>
+                  {fmtRate(v.agreementRate)}
+                </td>
+                <td style={{ ...TBL_CELL, color: '#6b7280', fontFamily: 'monospace', fontSize: 10 }}>
+                  {cluster.features.map((f, i) => `${f}=${centroid[i]}`).join('  ')}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 function SchemePanel() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+
+      <ClusterSchemesPanel />
 
       {/* ── Section 1: Team Roster Analysis ── */}
       <div style={{ marginBottom: 28 }}>
@@ -874,7 +1004,7 @@ function ScatterBlock({ points, regressionLine, correlation, n, confidence, xLab
   return (
     <div style={CARD}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <span style={{ fontSize: 16, fontWeight: 700, color: '#ebebeb' }}>r = {correlation.toFixed(3)}</span>
+        <span style={{ fontSize: 16, fontWeight: 700, color: '#ebebeb' }}>r = {fmtR(correlation, 3)}</span>
         <ConfidencePill confidence={confidence} />
         <span style={{ fontSize: 12, color: '#6b7280' }}>n = {n}</span>
         {!valid && reason && <span style={{ fontSize: 11, color: '#ef4444' }}>({reason})</span>}
@@ -982,14 +1112,14 @@ function RosterBioPanel() {
                 id: `matchup_${matchupXVar}_${matchupYVar}`,
                 type: 'matchup',
                 title: `${xLabel} → ${yLabel}`,
-                body: `r = ${matchupRel.correlation.toFixed(3)} · n = ${matchupRel.n} games`,
+                body: `r = ${fmtR(matchupRel.correlation, 3)} · n = ${matchupRel.n} games`,
                 savedAt: new Date().toLocaleDateString(),
               })
             }}
             style={{ ...BTN(true, T.accent), padding: '5px 14px', fontSize: 12 }}
           >Save</button>
           <span style={{ fontSize: 11, color: T.textLow }}>
-            {(() => { const { valid, reason } = scoreInsight(matchupRel.correlation, matchupRel.n); return valid ? `r = ${matchupRel.correlation.toFixed(3)}` : reason })()}
+            {(() => { const { valid, reason } = scoreInsight(matchupRel.correlation, matchupRel.n); return valid ? `r = ${fmtR(matchupRel.correlation, 3)}` : reason })()}
           </span>
         </div>
 
@@ -1123,10 +1253,140 @@ function RosterBioPanel() {
   )
 }
 
+// ── Scan Tab — sweep all X candidates against a chosen Y, BH-FDR controlled ──
+// Multiple-testing problem: if you check 25 X variables against win%, ~1.25 of
+// them will have p < 0.05 by chance alone. BH-FDR caps the *expected* fraction
+// of false positives among "survivors" at q (default 5%). Survivors are real;
+// non-survivors might still be real but we can't distinguish from noise.
+
+function ScanPanel() {
+  const [yKey,    setYKey]    = useState('win_pct')
+  const [q,       setQ]       = useState(0.05)
+  const [results, setResults] = useState(null)
+  const [running, setRunning] = useState(false)
+
+  const yMeta = ALL_METRICS_FLAT.find(m => m.key === yKey)
+
+  function runScan() {
+    setRunning(true)
+    // Defer to next tick so the button paints "running" before we block.
+    setTimeout(() => {
+      const candidates = ALL_METRICS_FLAT.filter(m => m.key !== yKey)
+      // Scan-mode B is lower than the per-pair detail view (5000) — purely a
+      // speed/exploration trade. Per-pair p-values are still distribution-free,
+      // just slightly noisier. The BH cut absorbs that.
+      const SCAN_B = 1000
+      const rows = candidates.map(m => {
+        const r = localCache('computeRelationship',
+          `${m.key}|${yKey}|2022,2025|cy=false`,
+          () => computeRelationship(enrichedSeasons, m.key, yKey, { withCI: true }))
+        return {
+          xKey: m.key,
+          xLabel: m.label,
+          group: m.group ?? '—',
+          r:      r.correlation,
+          ciLow:  r.ciLow,
+          ciHigh: r.ciHigh,
+          pValue: r.pValue,
+          n:      r.n,
+        }
+      })
+      const survivors = benjaminiHochberg(rows.map(r => r.pValue), q)
+      const annotated = rows.map((r, i) => ({ ...r, survives: survivors[i] }))
+      annotated.sort((a, b) => Math.abs(b.r ?? 0) - Math.abs(a.r ?? 0))
+      setResults({ rows: annotated, scanB: SCAN_B, q, total: rows.length, kept: survivors.filter(Boolean).length })
+      setRunning(false)
+    }, 0)
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={CARD}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: T.accentSoft, marginBottom: 8 }}>
+          Metric Grid Scan — Benjamini-Hochberg FDR
+        </div>
+        <div style={{ fontSize: 12, color: T.textLow, lineHeight: 1.6, marginBottom: 14 }}>
+          Sweeps all {ALL_METRICS_FLAT.length - 1} metrics against the target Y. Each pair gets a permutation p-value;
+          BH-FDR then caps the expected false-positive rate at q across the whole scan. Pairs that survive are
+          real signal; the rest may be noise from running many tests.
+        </div>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12, color: '#6b7280' }}>Y target</span>
+            <select style={{ ...SEL, minWidth: 200 }} value={yKey} onChange={e => setYKey(e.target.value)}>
+              {EXTENDED_METRIC_GROUPS.map(({ group, metrics }) => (
+                <optgroup key={group} label={group}>
+                  {metrics.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12, color: '#6b7280' }}>FDR q</span>
+            <select style={SEL} value={q} onChange={e => setQ(+e.target.value)}>
+              <option value={0.01}>0.01 (strict)</option>
+              <option value={0.05}>0.05</option>
+              <option value={0.10}>0.10 (lenient)</option>
+            </select>
+          </div>
+          <button style={{ ...BTN(true), padding: '6px 16px' }} onClick={runScan} disabled={running}>
+            {running ? 'Scanning…' : 'Run scan'}
+          </button>
+          {results && (
+            <span style={{ fontSize: 11, color: T.textLow }}>
+              {results.kept} of {results.total} survive at q={results.q} (B={results.scanB})
+            </span>
+          )}
+        </div>
+      </div>
+
+      {results && (
+        <div style={{ ...CARD, padding: 0, overflow: 'hidden' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={{ ...TBL_HDR, textAlign: 'left' }}>X variable</th>
+                <th style={{ ...TBL_HDR, textAlign: 'left' }}>Group</th>
+                <th style={{ ...TBL_HDR, textAlign: 'right' }}>r</th>
+                <th style={{ ...TBL_HDR, textAlign: 'right' }}>95% CI</th>
+                <th style={{ ...TBL_HDR, textAlign: 'right' }}>p</th>
+                <th style={{ ...TBL_HDR, textAlign: 'right' }}>n</th>
+                <th style={{ ...TBL_HDR, textAlign: 'center' }}>FDR</th>
+              </tr>
+            </thead>
+            <tbody>
+              {results.rows.map(row => (
+                <tr key={row.xKey} style={{ opacity: row.survives ? 1 : 0.5 }}>
+                  <td style={{ ...TBL_CELL, fontWeight: row.survives ? 600 : 400, color: '#ebebeb' }}>{row.xLabel}</td>
+                  <td style={{ ...TBL_CELL, color: '#6b7280' }}>{row.group}</td>
+                  <td style={{ ...TBL_CELL, textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: '#ebebeb' }}>
+                    {row.r == null ? '—' : row.r.toFixed(3)}
+                  </td>
+                  <td style={{ ...TBL_CELL, textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: '#9ca3af' }}>
+                    {row.ciLow == null ? '—' : `[${row.ciLow.toFixed(2)}, ${row.ciHigh.toFixed(2)}]`}
+                  </td>
+                  <td style={{ ...TBL_CELL, textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: '#9ca3af' }}>
+                    {row.pValue == null ? '—' : row.pValue.toFixed(3)}
+                  </td>
+                  <td style={{ ...TBL_CELL, textAlign: 'right', color: '#6b7280' }}>{row.n}</td>
+                  <td style={{ ...TBL_CELL, textAlign: 'center', fontWeight: 600, color: row.survives ? '#10b981' : '#6b7280' }}>
+                    {row.survives ? '✓' : '·'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Root ──────────────────────────────────────────────────────────────────────
 
 const TABS = [
   ['correlation', 'Metric Correlation'],
+  ['scan',        'FDR Scan'],
   ['schemes',     'Scheme Analysis'],
   ['biodata',     'Roster & Bio'],
 ]
@@ -1152,6 +1412,7 @@ export default function InsightsLab() {
       <div style={{ padding: '0 28px 28px', maxWidth: 1280, margin: '0 auto' }}>
 
       {tab === 'correlation' && <CorrelationPanel />}
+      {tab === 'scan'        && <ScanPanel />}
       {tab === 'schemes'     && <SchemePanel />}
       {tab === 'biodata'     && <RosterBioPanel />}
 

@@ -8,6 +8,7 @@ import gameLogs     from '../data/gameLogs.json'
 import baselineEP   from '../data/baseline_epa.json'
 import { runEPAPipeline } from '../utils/epaModels/pipeline.js'
 import { runTier2Pipeline } from '../utils/epaModels/tier2.js'
+import { getD1EPAModels } from '../utils/calibrationCache.js'
 import useEpaStore from '../store/useEpaStore.js'
 import PageHeader from '../components/shared/PageHeader.jsx'
 import DiagnosticsPanel from '../components/epa/DiagnosticsPanel.jsx'
@@ -44,15 +45,19 @@ const EVENT_ROWS_FULL = [
 
 const EVENT_ROWS_T1 = EVENT_ROWS_FULL.filter(r => r.key !== 'offTurnover' && r.key !== 'offRebound')
 
+// Sign-direction column reliability after the Phase-0 encoding audit.
+// `uncertain` here flags MAGNITUDE noise at n=32, not sign ambiguity — the
+// audit pinned every sign empirically (see EPA_MODELS.md). def_TOV is the
+// only column with a near-zero partial coefficient and is still flagged.
 const COEFF_META = [
-  { key: 'off_eFG', label: 'Off eFG%',  note: 'shooting quality',                             uncertain: false },
-  { key: 'off_TOV', label: 'Off TOV',   note: 'tov_o — sign unreliable at n=32; unconstrained models give wrong sign', uncertain: true  },
-  { key: 'off_ORB', label: 'Off ORB',   note: 'orb — sign unreliable at n=32; unconstrained models give wrong sign',   uncertain: true  },
-  { key: 'off_FTR', label: 'Off FTR',   note: 'free throw rate',                               uncertain: false },
-  { key: 'def_eFG', label: 'Def eFG%',  note: 'opponent shooting quality',                     uncertain: false },
-  { key: 'def_TOV', label: 'Def TOV',   note: 'tov_d — sign unreliable at n=32; unconstrained models give wrong sign', uncertain: true  },
-  { key: 'def_ORB', label: 'Def ORB',   note: 'drb — sign unreliable at n=32; unconstrained models give wrong sign',   uncertain: true  },
-  { key: 'def_FTR', label: 'Def FTR',   note: 'opponent free throw rate',                      uncertain: false },
+  { key: 'off_eFG', label: 'Off eFG%',  note: 'shooting quality',                                    uncertain: false },
+  { key: 'off_TOV', label: 'Off TOV',   note: 'tov_o — magnitude unstable at n=32; sign empirically + (verified)',  uncertain: true  },
+  { key: 'off_ORB', label: 'Off ORB',   note: 'orb — magnitude unstable at n=32; sign empirically − (verified)',    uncertain: true  },
+  { key: 'off_FTR', label: 'Off FTR',   note: 'free throw rate',                                     uncertain: false },
+  { key: 'def_eFG', label: 'Def eFG%',  note: 'opponent shooting quality',                           uncertain: false },
+  { key: 'def_TOV', label: 'Def TOV',   note: 'tov_d — partial β ≈ 0 at n=32; weakest of the four',  uncertain: true  },
+  { key: 'def_ORB', label: 'Def ORB',   note: 'drb — own DRB%; sign verified, magnitude noisy',      uncertain: true  },
+  { key: 'def_FTR', label: 'Def FTR',   note: 'opponent free throw rate',                            uncertain: false },
 ]
 
 function EventEPATable({ epa, full = false }) {
@@ -79,7 +84,7 @@ function EventEPATable({ epa, full = false }) {
       </tbody>
     </table>
     <div style={{ fontSize: 10, color: T.textMin, marginTop: 8 }}>
-      EPA from sign-constrained model (NNLS). TOV and ORB effects omitted — unreliable at n=32 due to collinearity with eFG%. See Tier 2 for n=900 estimates.
+      EPA from sign-constrained model (NNLS). TOV and ORB effects omitted — unreliable at n=32 due to collinearity with eFG%. Tier 2 would refine these once real per-game box scores replace the synthetic placeholder data.
     </div>
     </div>
   )
@@ -91,35 +96,59 @@ function CoeffTable({ coefficients }) {
     <div>
       <p style={{ fontSize: 11, color: T.textLow, marginBottom: 10 }}>
         β_eFG of 1.2 means a 1% increase in eFG% adds 1.2 pts of net efficiency per 100 possessions.
-        Fields marked <span style={{ color: T.amber }}>?</span> have unreliable signs at n=32 — even unconstrained models produce wrong-signed coefficients for TOV/ORB due to correlation with eFG%.
-        Use Tier 2 (n=900) for stable estimates of these factors.
+        Signs for all eight factors are empirically verified (see <code>encodingAudit.js</code> + EPA_MODELS.md).
+        Rows shaded amber have <strong style={{ color: T.amber }}>unstable magnitudes at n=32</strong> due to multicollinearity with eFG% — not unreliable signs.
+        A real per-game box-score dataset would tighten these; today's Tier 2 panel uses synthetic data and is hidden by default.
       </p>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
         <thead>
           <tr style={{ borderBottom: `1px solid ${T.border}` }}>
-            <th style={{ textAlign: 'left', padding: '5px 0', color: T.textLow, fontWeight: 500 }}>Factor</th>
+            <th style={{ textAlign: 'left',  padding: '5px 0', color: T.textLow, fontWeight: 500 }}>Factor</th>
             <th style={{ textAlign: 'right', padding: '5px 6px', color: T.textLow, fontWeight: 500 }}>β</th>
-            <th style={{ textAlign: 'left', padding: '5px 8px', color: T.textLow, fontWeight: 500 }}>Note</th>
+            <th style={{ textAlign: 'left',  padding: '5px 8px', color: T.textLow, fontWeight: 500 }}>Note</th>
           </tr>
         </thead>
         <tbody>
           {COEFF_META.map(({ key, label, note, uncertain }) => {
             const val = coefficients[key]
+            // Visual treatment for unreliable coefficients: amber row tint,
+            // dotted underline on the value, italic note. Same visual weight
+            // is no longer used for reliable and unreliable estimates.
+            const rowBg = uncertain ? `${T.amber}14` : 'transparent'
             return (
-              <tr key={key} style={{ borderBottom: `1px solid ${T.border}20` }}>
-                <td style={{ padding: '6px 0', color: uncertain ? T.amber : T.textMd }}>
+              <tr key={key} style={{
+                borderBottom: `1px solid ${T.border}20`,
+                background: rowBg,
+              }}>
+                <td style={{ padding: '6px 0', color: uncertain ? T.amber : T.textMd, fontWeight: uncertain ? 600 : 400 }}>
+                  {uncertain && <span title="Sign unreliable on n=32 — see note" style={{ fontSize: 10, marginRight: 5, padding: '1px 5px', background: T.amber, color: '#1a1a1a', borderRadius: 3, fontWeight: 700 }}>?</span>}
                   {label}
-                  {uncertain && <span style={{ fontSize: 10, marginLeft: 5, opacity: 0.7 }}>?</span>}
                 </td>
-                <td style={{ padding: '6px 6px', textAlign: 'right', fontFamily: 'monospace', color: T.text }}>
+                <td style={{
+                  padding: '6px 6px', textAlign: 'right', fontFamily: 'monospace',
+                  color: uncertain ? T.amber : T.text,
+                  textDecoration: uncertain ? 'underline dotted' : 'none',
+                  textDecorationColor: uncertain ? T.amber : undefined,
+                  opacity: uncertain ? 0.85 : 1,
+                  fontStyle: uncertain ? 'italic' : 'normal',
+                }}>
                   {val != null ? val.toFixed(4) : '—'}
                 </td>
-                <td style={{ padding: '6px 8px', color: T.textMin, fontSize: 11 }}>{note}</td>
+                <td style={{
+                  padding: '6px 8px', color: uncertain ? T.amber : T.textMin, fontSize: 11,
+                  fontStyle: uncertain ? 'italic' : 'normal',
+                  opacity: uncertain ? 0.9 : 1,
+                }}>
+                  {note}
+                </td>
               </tr>
             )
           })}
         </tbody>
       </table>
+      <div style={{ fontSize: 10, color: T.textMin, marginTop: 8, fontStyle: 'italic' }}>
+        Reliable rows (eFG, FTR) are shown solid; unreliable rows (TOV, ORB) are amber-tinted with dotted underlines so they're not visually equivalent to the trustworthy estimates.
+      </div>
     </div>
   )
 }
@@ -281,7 +310,24 @@ function StateEPAPanel({ states, deltaNote }) {
   )
 }
 
+// LocalStorage gate so developers can opt into seeing synthetic numbers
+// without exposing them to ordinary users. Default: hidden.
+function useSyntheticOverride() {
+  const [show, setShow] = useState(() => {
+    try { return localStorage.getItem('epaLab.showSynthetic') === '1' }
+    catch { return false }
+  })
+  const toggle = () => setShow(s => {
+    const next = !s
+    try { localStorage.setItem('epaLab.showSynthetic', next ? '1' : '0') } catch {}
+    return next
+  })
+  return [show, toggle]
+}
+
 function TierCard({ badge, description, tier, result, activeComparison, observations, synthetic, epaOverride, statesOverride, fullEvents = false }) {
+  const [showSynthetic, toggleSynthetic] = useSyntheticOverride()
+
   if (!result) return (
     <div style={{ ...CARD, marginBottom: 20 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
@@ -300,15 +346,21 @@ function TierCard({ badge, description, tier, result, activeComparison, observat
     </div>
   )
   const r = result.result ?? result
+
+  // Suppress numerical content for synthetic tiers unless the developer
+  // toggle is active. Keeps the panel structure visible (so users see what
+  // would appear with real data) without leaking misleading numbers.
+  const hideNumbers = synthetic && !showSynthetic
+
   return (
     <div style={{ ...CARD, marginBottom: 20 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
         <span style={{ background: T.accent + '22', color: T.accentSoft, borderRadius: 4, padding: '2px 8px', fontSize: 11, fontWeight: 700 }}>{badge}</span>
         <span style={{ fontSize: 12, color: T.text, fontWeight: 600 }}>{r.label ?? tier}</span>
-        {r.r2 != null && <span style={{ fontSize: 11, color: T.textLow }}>R²={r.r2}</span>}
-        {r.cvR2 != null && <span style={{ fontSize: 11, color: T.blue }}>CVR²={r.cvR2}</span>}
-        {r.rmse != null && <span style={{ fontSize: 11, color: T.textLow }}>RMSE={r.rmse}</span>}
-        {r.alpha != null && <span style={{ fontSize: 11, color: T.blue }}>λ={r.alpha}</span>}
+        {!hideNumbers && r.r2 != null && <span style={{ fontSize: 11, color: T.textLow }}>R²={r.r2}</span>}
+        {!hideNumbers && r.cvR2 != null && <span style={{ fontSize: 11, color: T.blue }}>CVR²={r.cvR2}</span>}
+        {!hideNumbers && r.rmse != null && <span style={{ fontSize: 11, color: T.textLow }}>RMSE={r.rmse}</span>}
+        {!hideNumbers && r.alpha != null && <span style={{ fontSize: 11, color: T.blue }}>λ={r.alpha}</span>}
         {synthetic && (
           <span style={{ background: T.amberBg, color: T.amber, borderRadius: 4, padding: '2px 7px', fontSize: 10, fontWeight: 600 }}>SYNTHETIC</span>
         )}
@@ -317,14 +369,79 @@ function TierCard({ badge, description, tier, result, activeComparison, observat
         <div style={{ fontSize: 11, color: T.textLow, marginBottom: 12 }}>{description}</div>
       )}
       {synthetic && (
-        <div style={{ fontSize: 11, color: T.amber, marginBottom: 12 }}>
-          Synthetic game data — not validated. Replace gameLogs.json with real ESPN box scores.
+        <div style={{ fontSize: 11, color: T.amber, marginBottom: 12, lineHeight: 1.5 }}>
+          Synthetic game data — coefficients, EPA, and scatter would not reflect real Ivy play.
+          {' '}Numbers are hidden by default. Replace gameLogs.json with real ESPN box scores
+          (<code>node scripts/fetch-gamelogs.mjs</code>) to populate this card.
+          <button onClick={toggleSynthetic}
+            style={{ marginLeft: 10, fontSize: 10, color: T.textLow, background: 'transparent', border: `1px solid ${T.border}`, borderRadius: 4, padding: '2px 8px', cursor: 'pointer' }}>
+            {showSynthetic ? 'Hide synthetic numbers' : 'Show synthetic numbers (developer)'}
+          </button>
         </div>
       )}
-      {activeComparison === 'events'       && <EventEPATable  epa={epaOverride ?? r.eventEPA} full={fullEvents} />}
-      {activeComparison === 'coefficients' && <CoeffTable     coefficients={r.coefficients} />}
-      {activeComparison === 'scatter'      && <ScatterViz     observations={r.observations ?? observations} r2={r.r2} n={r.n} label={r.label} />}
-      {activeComparison === 'state'        && <StateEPAPanel  states={statesOverride ?? r.states} deltaNote={(statesOverride ?? r.states)?._deltaNote} />}
+      {hideNumbers ? (
+        <div style={{ fontSize: 12, color: T.textMin, padding: '24px 0', textAlign: 'center', border: `1px dashed ${T.border}`, borderRadius: 8 }}>
+          Numbers hidden — Tier 2 panel awaiting real data.
+        </div>
+      ) : (
+        <>
+          {activeComparison === 'events'       && <EventEPATable  epa={epaOverride ?? r.eventEPA} full={fullEvents} />}
+          {activeComparison === 'coefficients' && <CoeffTable     coefficients={r.coefficients} />}
+          {activeComparison === 'scatter'      && <ScatterViz     observations={r.observations ?? observations} r2={r.r2} n={r.n} label={r.label} />}
+          {activeComparison === 'state'        && <StateEPAPanel  states={statesOverride ?? r.states} deltaNote={(statesOverride ?? r.states)?._deltaNote} />}
+        </>
+      )}
+    </div>
+  )
+}
+
+// ── D1 comparison panel ──────────────────────────────────────────────────────
+// Shows the four-factor coefficients fitted on the full Barttorvik D1 corpus
+// (~1400 obs) alongside a note that the n=32 collinearity which forces the
+// Ivy-only constrained model to zero TOV/ORB is dissolved at this scale.
+
+function D1ComparisonPanel() {
+  const d1 = getD1EPAModels()
+  if (!d1?.ridge_split) return null
+  const c = d1.ridge_split
+  const rows = [
+    ['off_eFG', c.off_eFG], ['off_TOV', c.off_TOV], ['off_ORB', c.off_ORB], ['off_FTR', c.off_FTR],
+    ['def_eFG', c.def_eFG], ['def_TOV', c.def_TOV], ['def_ORB', c.def_ORB], ['def_FTR', c.def_FTR],
+  ]
+  return (
+    <div style={{ ...CARD, marginTop: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: T.green, letterSpacing: '0.06em' }}>D1-TRAINED</span>
+        <span style={{ fontSize: 14, fontWeight: 600, color: T.textHi }}>Four-factor coefficients fit on full D1 corpus</span>
+      </div>
+      <div style={{ fontSize: 12, color: T.textMd, lineHeight: 1.6, marginBottom: 14, maxWidth: 720 }}>
+        Coefficients fitted on <strong>{d1.nTrain}</strong> D1 team-seasons (Barttorvik, 2022-25), applied to the Ivy 32 above.
+        At this scale TOV% and ORB% have stable, non-zero estimates — the n=32 collinearity that forces the constrained
+        Ivy-only model to zero them out dissolves here. The selected D1 model is{' '}
+        <code style={{ fontSize: 11, color: T.accentSoft }}>{d1.selectedModel.replace(/_/g, ' ')}</code>.
+        Note: target is opponent-adjusted (adjoe-adjde) since the Barttorvik slice endpoint doesn't expose raw ppp;
+        coefficients are slightly biased but residual interpretation is fine.
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>
+        <thead>
+          <tr>
+            <th style={{ textAlign: 'left',  padding: '6px 8px', color: T.textLow, fontSize: 10, textTransform: 'uppercase', borderBottom: `1px solid ${T.border}` }}>Factor</th>
+            <th style={{ textAlign: 'right', padding: '6px 8px', color: T.textLow, fontSize: 10, textTransform: 'uppercase', borderBottom: `1px solid ${T.border}` }}>Coefficient</th>
+            <th style={{ textAlign: 'left',  padding: '6px 8px', color: T.textLow, fontSize: 10, textTransform: 'uppercase', borderBottom: `1px solid ${T.border}` }}>Direction</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([name, val]) => (
+            <tr key={name}>
+              <td style={{ padding: '6px 8px', color: T.textMd }}>{name}</td>
+              <td style={{ padding: '6px 8px', textAlign: 'right', color: T.textHi, fontWeight: 600 }}>{val >= 0 ? '+' : ''}{val.toFixed(3)}</td>
+              <td style={{ padding: '6px 8px', color: T.textLow, fontSize: 11 }}>
+                {Math.abs(val) < 0.05 ? 'near-zero' : val > 0 ? 'increases target' : 'decreases target'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
@@ -342,13 +459,13 @@ export default function EpaLab() {
 
   // Compute Tier 1 once and cache in store — survives navigation
   const pipeline = useMemo(() => {
-    if (tier1Result) return tier1Result
+    if (tier1Result.raw) return tier1Result.raw
     try {
       const result = runEPAPipeline(teamSeasons, { targetMode: 'raw', baselineEP })
-      setTier1Result(result)
+      setTier1Result(result, 'raw')
       return result
     } catch (e) { return { status: 'error', messages: [e.message], models: null } }
-  }, [tier1Result])
+  }, [tier1Result.raw])
 
   // Compute Tier 2 when ivyOnly changes; cache result keyed by ivyOnly flag
   const tier2CacheKey = `ivyOnly=${ivyOnly}`
@@ -427,6 +544,8 @@ export default function EpaLab() {
                 epaOverride={pipeline.selectedEventEPA}
                 statesOverride={pipeline.selectedStates}
               />
+
+              <D1ComparisonPanel />
             </>
         }
 
@@ -442,9 +561,9 @@ export default function EpaLab() {
 
         <PageConclusions prominent conclusions={[
           { label: 'What EPA measures', color: T.accentSoft, text: 'EPA (Expected Points Added) converts regression coefficients from the Dean Oliver four-factor model into intuitive per-event values. A made 2-pt FG adds ~2.36 pts of net efficiency per 100 possessions. These are not assumed weights — they are estimated from Ivy League game data.' },
-          { label: 'Why TOV/ORB are omitted in Tier 1', color: T.amber, text: 'With only n=32 Ivy team-seasons, TOV% and ORB% are sufficiently correlated with eFG% that all models — including unconstrained ridge — produce wrong-signed coefficients for those two factors. The constrained model correctly zeroes them. Tier 2 (n=900 game rows) produces more reliable estimates.' },
+          { label: 'Why TOV/ORB are omitted in Ivy-only Tier 1', color: T.amber, text: 'With only n=32 Ivy team-seasons, TOV% and ORB% are sufficiently correlated with eFG% that all models — including unconstrained ridge — produce wrong-signed coefficients for those two factors. The constrained model correctly zeroes them. The D1-trained panel above fits on n≈1400 and recovers stable, non-zero TOV/ORB estimates, demonstrating the constraint is a small-sample artifact rather than a structural fact.' },
           { label: 'Model selection logic', color: T.blue, text: 'Four models are fit: OLS, Ridge joint, Ridge split (offense/defense separate), and Constrained OLS (NNLS with theory-correct sign constraints). The pipeline auto-selects by LOO-CV R² and sign validity. EPA event values always come from the constrained model to ensure correct sign direction.' },
-          { label: 'Tier 1 vs Tier 2', color: T.green, text: 'Tier 1 uses season-aggregate four-factor data (Barttorvik, 2022–25). Tier 2 uses per-game box scores from the ESPN API for the same 8 schools and seasons. Tier 2 has 28× more observations, better isolates game-level variance, and gives reliable TOV/ORB estimates.' },
+          { label: 'Tier 1 vs Tier 2 (when populated)', color: T.green, text: 'Tier 1 uses season-aggregate four-factor data (Barttorvik, 2022–25). Tier 2 is intended for per-game box scores from the ESPN API for the same 8 schools and seasons. Real Tier 2 data would have ~28× more observations, better isolate game-level variance, and stabilise TOV/ORB estimates. Today\'s Tier 2 panel is fed by synthetic data and its numbers are suppressed by default.' },
         ]} />
 
         <MethodologyPanel

@@ -4,9 +4,6 @@ A React web app for exploring Ivy League men's basketball data (2022–2025). Bu
 
 ## Pages
 
-### Comparison Lab (`/`)
-Side-by-side team comparison across any season. Radar charts, four-factor breakdowns, and net efficiency trends for any two school/year combinations.
-
 ### Matchup Analyzer (`/analyzer`)
 Head-to-head matchup projections using adjusted efficiency margins and historical Ivy performance.
 
@@ -41,7 +38,6 @@ Because Barttorvik's ORTG/DRTG are already lineup-adjusted, the ratings implicit
 ivy-basketball-ui/
 ├── src/
 │   ├── pages/
-│   │   ├── ComparisonLab.jsx     # Team comparison radar + four factors
 │   │   ├── MatchupAnalyzer.jsx   # Head-to-head projections
 │   │   ├── InsightsLab.jsx       # Correlation / Scheme / Biodata tabs
 │   │   └── PlayerLab.jsx         # Player profiles + power leaderboard

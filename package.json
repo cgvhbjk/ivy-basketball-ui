@@ -7,8 +7,12 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "fetch-data": "node scripts/fetch-data.mjs",
-    "fetch-combine": "node scripts/fetch-combine-data.mjs"
+    "fetch-d1": "node scripts/fetch-d1-data.mjs",
+    "fetch-combine": "node scripts/fetch-combine-data.mjs",
+    "precompute": "node scripts/precompute.mjs"
   },
   "dependencies": {
     "react": "^18.2.0",
@@ -24,6 +28,7 @@
     "autoprefixer": "^10.4.17",
     "postcss": "^8.4.35",
     "tailwindcss": "^3.4.1",
-    "vite": "^5.1.0"
+    "vite": "^5.1.0",
+    "vitest": "^1.6.0"
   }
 }

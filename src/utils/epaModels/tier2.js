@@ -27,11 +27,19 @@ function computeGameFactors(g) {
 
   const eFG_o = ((g.fgm + 0.5 * g.fg3m) / g.fga) * 100
   const tov_o = (g.tov / poss) * 100
-  const orb_o = g.orb / (g.orb + (g.opp_drb || 1)) * 100
+  // Rebound rate denominators must guard 0 explicitly. The previous `|| 1`
+  // treated a real value of 0 (no defensive rebounds at all) as if it were
+  // missing data; that quietly contaminated the rate. With ?? we now only
+  // fill in for missing fields, and bail on the row if neither side has any
+  // rebound activity.
+  const orbDenom_o = g.orb + (g.opp_drb ?? 0)
+  const orbDenom_d = g.opp_orb + (g.drb ?? 0)
+  if (orbDenom_o === 0 || orbDenom_d === 0) return null
+  const orb_o = (g.orb / orbDenom_o) * 100
   const ftr_o = (g.ftm / g.fga) * 100
   const eFG_d = ((g.opp_fgm + 0.5 * g.opp_fg3m) / g.opp_fga) * 100
   const tov_d = (g.opp_tov / oPoss) * 100
-  const orb_d = g.opp_orb / (g.opp_orb + (g.drb || 1)) * 100
+  const orb_d = (g.opp_orb / orbDenom_d) * 100
   const ftr_d = (g.opp_ftm / g.opp_fga) * 100
   const netEff = ((pts / poss) - (opp_pts / oPoss)) * 100
 

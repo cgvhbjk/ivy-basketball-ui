@@ -59,20 +59,47 @@ Current default output: **Constrained OLS** (sign issues in `tov_o`, `orb`, `tov
 
 ---
 
-## Field encoding note
+## Field encoding (Phase 0 — VERIFIED)
 
-Four fields in `teamSeasons.json` have **ambiguous directional encoding** for Barttorvik data:
+The directional encoding of four columns from Barttorvik's slice JSON was historically ambiguous. The Phase-0 audit (`src/utils/epaModels/encodingAudit.js`) resolves this empirically — it fits a four-factor OLS on the 32 Ivy team-seasons and reports the partial coefficient signs. The unit test at `src/utils/epaModels/__tests__/encodingAudit.test.js` locks these signs in CI.
 
-| Field | Expected | What we find | Implication |
-|---|---|---|---|
-| `tov_o` | Team's offensive TOV rate (high = bad) | Positive coefficient for ppp | May encode *defensive* turnover forcing |
-| `orb` | Team's ORB% (high = good) | Negative coefficient for ppp | May encode *opponent's* ORB rate against us |
-| `tov_d` | Opponent TOV% (high = good for defense) | Positive coefficient in split but small | Direction consistent with expected |
-| `drb` | Team or opponent DRB% | Unclear | Ambiguous in split model |
+### Empirical regression (n=32, standardized X)
 
-VIF values are all 1.3–1.8 (low) — this is **not** a multicollinearity problem. The sign issues stem from the field encoding being opposite to the assumed convention.
+**Offense → ppp** (R²=0.96):
 
-**Recommendation**: If you have access to the raw Barttorvik scraper, verify which direction `tov_o` and `orb` are counted (by team or by opponent).
+| Field | β   | Sign | Note |
+|---|----:|:---:|---|
+| `efg_o` | +4.36 | + | Standard convention; matches textbook. |
+| `tov_o` | +0.55 | **+** | Opposite of textbook — likely a percentile-rank-where-higher-is-better encoding (high `tov_o` ⇒ low actual TOV%). |
+| `orb`   | −2.63 | **−** | Opposite of textbook — encoding is opposite-direction to standard ORB%. |
+| `ftr_o` | +0.99 | + | Standard. |
+
+**Defense → opp_ppp** (R²=0.87):
+
+| Field | β   | Sign | Note |
+|---|----:|:---:|---|
+| `efg_d` | +2.83 | + | Standard. |
+| `tov_d` | +0.07 | + | **Low confidence** — magnitude effectively zero at n=32. Audit warns; bivariate sign is weakly negative, partial sign is weakly positive. We retain the audit's positive sign for the constraint but expect this is the noisiest of the four. |
+| `drb`   | −2.42 | − | Standard — own DRB% reduces opp scoring. |
+| `ftr_d` | +1.95 | + | Standard. |
+
+### What the locked signs mean for the pipeline
+
+The verification result is encoded in three constraint dictionaries (all in `config.js`):
+
+```js
+SIGN_CONSTRAINTS_OFF = { off_eFG: 1, off_TOV: 1, off_ORB: -1, off_FTR: 1 }
+SIGN_CONSTRAINTS_DEF = { def_eFG: 1, def_TOV: 1, def_ORB: -1, def_FTR: 1 }
+SIGN_CONSTRAINTS     = { ...OFF, def_eFG: -1, def_TOV: -1, def_ORB: 1, def_FTR: -1 }   // joint, defensive flips
+```
+
+Three signs differ from textbook convention: `off_TOV: +1` (was −1), `off_ORB: −1` (was +1), `def_ORB: +1` in the joint dict (was −1). These mismatches were silently producing wrong-signed coefficients in the constrained model before Phase 0.
+
+### Why we still need the modeling complexity
+
+Phase 0 originally hypothesized that fixing the encoding would let us retire `constrained_ols` and the dual-variant logic in `convertToEventEPA`. That partly held: the **sign ambiguity is gone** (we now know what every coefficient should look like). But the small-sample multicollinearity remains — at n=32, ridge-split still produces `def_TOV` coefficients near zero, and the joint model still benefits from sign enforcement to keep TOV/ORB from getting absorbed by `eFG`. The constrained model and the model-comparison logic stay; only the "we don't know which way is up" hedging in copy/docs goes away.
+
+**Recommendation for future data refreshes**: run `npm test` after refreshing `teamSeasons.json`. If the encoding audit fails, the refresh introduced an encoding flip — investigate before merging.
 
 ---
 

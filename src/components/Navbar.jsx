@@ -1,7 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import { T } from '../styles/theme.js'
 
-// Comparison Lab intentionally excluded — code preserved at /comparison for future reuse
 const LINKS = [
   { to: '/analyzer', label: 'Matchup Analyzer' },
   { to: '/insights',  label: 'Insights Lab'     },

@@ -30,20 +30,49 @@ export function fitRidge(X, y, alpha, featureNames) {
 
 // ── Ridge with LOO-CV alpha selection ────────────────────────────────────────
 
-export function fitRidgeCV(X, y, featureNames, { alphas, cvFolds = 'loo' } = {}) {
+// Deterministic 32-bit PRNG (mulberry32) — used to shuffle CV folds reproducibly.
+// LOO doesn't need shuffling (every fold has exactly one observation), but with
+// k-fold and rows pre-sorted by school/year, sequential `i % k` assignment puts
+// non-random groupings into each fold and inflates CV-R².
+function mulberry32(seed) {
+  let a = seed >>> 0
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0
+    let t = a
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+function shuffledIndices(n, seed) {
+  const idx = Array.from({ length: n }, (_, i) => i)
+  const rand = mulberry32(seed)
+  for (let i = n - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1))
+    ;[idx[i], idx[j]] = [idx[j], idx[i]]
+  }
+  return idx
+}
+
+export function fitRidgeCV(X, y, featureNames, { alphas, cvFolds = 'loo', seed = 1 } = {}) {
   const n = y.length
   const folds = cvFolds === 'loo' ? n : Math.min(cvFolds, n)
+
+  // For LOO each fold is a single row, so shuffling has no effect; for k-fold
+  // we permute once and assign by position so each fold sees a mix of rows.
+  const order = folds === n ? Array.from({ length: n }, (_, i) => i) : shuffledIndices(n, seed)
+  const foldAssign = new Array(n)
+  order.forEach((origIdx, pos) => { foldAssign[origIdx] = pos % folds })
+
+  const indices = Array.from({ length: n }, (_, i) => i)
 
   let bestAlpha = alphas[0]
   let bestMSE   = Infinity
   const cvResults = []
 
   for (const alpha of alphas) {
-    const preds   = new Array(n).fill(null)
-    const indices = Array.from({ length: n }, (_, i) => i)
-
-    // Build fold assignments
-    const foldAssign = indices.map(i => i % folds)
+    const preds = new Array(n).fill(null)
 
     for (let fold = 0; fold < folds; fold++) {
       const trainIdx = indices.filter(i => foldAssign[i] !== fold)
@@ -68,10 +97,8 @@ export function fitRidgeCV(X, y, featureNames, { alphas, cvFolds = 'loo' } = {})
   // Refit on all data with best alpha
   const finalModel = fitRidge(X, y, bestAlpha, featureNames)
 
-  // Also compute per-fold beta for stability reporting
+  // Also compute per-fold beta for stability reporting (using the same fold split)
   const foldBetas = []
-  const indices   = Array.from({ length: n }, (_, i) => i)
-  const foldAssign = indices.map(i => i % folds)
   for (let fold = 0; fold < folds; fold++) {
     const trainIdx = indices.filter(i => foldAssign[i] !== fold)
     const Xtr = trainIdx.map(i => X[i])
@@ -142,8 +169,16 @@ export function fitConstrained(X, y, featureNames, signConstraints = SIGN_CONSTR
   const yc = y.map(v => v - yMean)
   const Xc = X.map(row => featureNames.map((_, j) => row[j + 1] - colMeans[j]))
 
-  // Apply sign flips to make all constraints into ≥ 0
-  const signs = featureNames.map(name => signConstraints[name] ?? 1)
+  // Apply sign flips to make all constraints into ≥ 0.
+  // Note: NNLS can only enforce non-negativity, so a constraint of 0
+  // ("unconstrained") still runs through the same flow — we treat it as +1
+  // (no flip, NNLS will zero it if its true sign is negative). A previous
+  // version used `?? 1`, which left signs[j] at 0 and silently dropped the
+  // feature column entirely.
+  const signs = featureNames.map(name => {
+    const s = signConstraints[name]
+    return s === 1 || s === -1 ? s : 1
+  })
   const Xflip = Xc.map(row => row.map((v, j) => v * signs[j]))
 
   let betaPos

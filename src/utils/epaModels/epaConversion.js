@@ -108,10 +108,27 @@ export function convertToEventEPA(coefficients, leagueRates, baselineEP = null, 
                        orbMap.reset_pct   * ps.reset_possession.ep).toFixed(3)
     const orbDelta = +(off_ORB * ORB_POSSESSION_CREDIT / 100).toFixed(3)
 
-    // FT foul drawn context
+    // FT foul drawn context.
+    // baseline_epa.json declares three shares (two_shot, one_and_one, and_one) but
+    // only defines EP states for two_shot and one_and_one. We approximate the
+    // and-one as `made FG (worth ~ league PPP) + one bonus FT (≈ ft_pct points)`,
+    // anchored on the two-shot state when configured FT data is present.
     const ftMap   = esm.foulDrawn
-    const ftBase  = +(ftMap.two_shot_pct   * ps.foul_drawn_two_shots.ep +
-                      ftMap.one_and_one_pct * ps.foul_drawn_one_and_one.ep).toFixed(3)
+    const andOnePct = ftMap.and_one_pct ?? 0
+    // Bonus-FT EP for an and-one — half of two-shot EP is a reasonable proxy
+    // for one made FT plus retention dynamics.
+    const andOneEP = ps.foul_drawn_two_shots.ep / 2 +
+                     (ps.foul_drawn_two_shots.ep - ps.foul_drawn_one_and_one.ep)
+    // Renormalize known weights so they sum to 1, even if the data file leaves
+    // shares short of 1 (e.g., {0.55, 0.30, 0.15} sums to 1; {0.55, 0.30} alone
+    // would drop 15% of the foul-drawn population from the weighted average).
+    const ftWeightSum = ftMap.two_shot_pct + ftMap.one_and_one_pct + andOnePct
+    const norm = ftWeightSum > 0 ? ftWeightSum : 1
+    const ftBase  = +((
+      ftMap.two_shot_pct    * ps.foul_drawn_two_shots.ep +
+      ftMap.one_and_one_pct * ps.foul_drawn_one_and_one.ep +
+      andOnePct             * andOneEP
+    ) / norm).toFixed(3)
 
     // Forced turnover (defensive) — mirror of offTurnover
     const defTovBase = tovBase  // same state structure, your team is now the beneficiary

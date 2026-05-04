@@ -1,0 +1,74 @@
+{
+  "generatedAt": "2026-05-04T05:37:36.233Z",
+  "dataHash": "ts32-g911-wp15.794",
+  "winModel": {
+    "intercept": 0,
+    "slope": 0.1404,
+    "homeBonus": 0.4186,
+    "n": 236,
+    "fallback": false
+  },
+  "pyAdjusted": {
+    "exponent": 9.9,
+    "mode": "adjusted",
+    "n": 32,
+    "sse": 0.1643,
+    "fallback": false
+  },
+  "pyRaw": {
+    "exponent": 7.8,
+    "mode": "raw",
+    "n": 32,
+    "sse": 0.3066,
+    "fallback": false
+  },
+  "d1Hash": "d1-1447",
+  "d1Models": {
+    "ols_joint": {
+      "intercept": 12.473412216873726,
+      "off_eFG": 1.5318003356129066,
+      "off_TOV": 0.2102528746821115,
+      "off_ORB": -1.6498846665886182,
+      "off_FTR": 0.6917378392491691,
+      "def_eFG": -1.6744336177924453,
+      "def_TOV": -0.26599796405629117,
+      "def_ORB": 1.1352257419853011,
+      "def_FTR": -0.48280351822564893
+    },
+    "ridge_joint": {
+      "intercept": 12.682402224745061,
+      "off_eFG": 1.5237375033105562,
+      "off_TOV": 0.20947044166383827,
+      "off_ORB": -1.641110744678501,
+      "off_FTR": 0.6881201421507489,
+      "def_eFG": -1.6683452043941889,
+      "def_TOV": -0.2644846780805324,
+      "def_ORB": 1.1251774144017739,
+      "def_FTR": -0.4830659129149612
+    },
+    "ridge_split": {
+      "off_eFG": 1.5193297028346961,
+      "off_TOV": 0.17033705284878525,
+      "off_ORB": -1.440300614576531,
+      "off_FTR": 0.6597813598262164,
+      "def_eFG": 1.551154884155868,
+      "def_TOV": 0.20368754242440504,
+      "def_ORB": -1.1539345527293388,
+      "def_FTR": 0.6075600159890032
+    },
+    "constrained_ols": {
+      "intercept": 12.47341221669412,
+      "off_eFG": 1.5318003356127992,
+      "off_TOV": 0.21025287468244755,
+      "off_ORB": -1.6498846665888494,
+      "off_FTR": 0.6917378392495721,
+      "def_eFG": -1.6744336177889556,
+      "def_TOV": -0.26599796405653287,
+      "def_ORB": 1.1352257419857021,
+      "def_FTR": -0.4828035182259478
+    },
+    "selectedModel": "ridge_split",
+    "selectionReason": "Ridge split selected: LOO-CV R² off=0.8288 def=0.7801. All four-factor signs match the Phase-0 empirical audit (see encodingAudit.js).",
+    "nTrain": 1447
+  }
+}

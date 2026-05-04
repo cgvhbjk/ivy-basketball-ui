@@ -5,6 +5,7 @@ import {
 } from 'recharts'
 import players from '../data/players.json'
 import nbaCombine from '../data/nbaCombine.json'
+import { NBA_COMBINE_META } from '../data/nbaCombineMeta.js'
 import { SCHOOLS, SCHOOL_META, SCHOOL_COLORS, YEARS, PLAYER_METRICS } from '../data/constants.js'
 import usePlayerStore from '../store/usePlayerStore.js'
 import GlossaryTooltip from '../components/shared/GlossaryTooltip.jsx'
@@ -812,8 +813,11 @@ export default function PlayerLab() {
                       )}
                     </div>
                     <div style={{ fontSize: 12, color: T.textLow, marginBottom: 16 }}>
-                      25th–75th percentile of {pos}s at the NBA Draft Combine (2019–2024).
+                      25th–75th percentile of {pos}s at the NBA Draft Combine ({NBA_COMBINE_META.draftYearMin}–{NBA_COMBINE_META.draftYearMax}, n={NBA_COMBINE_META.byPosition[pos] ?? 0}).
                       Enter any measured results — trainable metrics update the S&C program below. Physical metrics are stored for your scouting profile.
+                    </div>
+                    <div style={{ fontSize: 11, color: T.amber, marginBottom: 16, fontStyle: 'italic' }}>
+                      Note: combine attendees are top-60 draft prospects. Targets are aspirational, not peer-cohort medians.
                     </div>
 
                     {/* Physical measurements */}
@@ -848,7 +852,7 @@ export default function PlayerLab() {
 
                     {/* College production vs comparable draftees */}
                     {nbaBenchmarks && (
-                      <Accordion title="College Production vs Drafted Comparables" badge={`n=${nbaBenchmarks.n} draftees`}>
+                      <Accordion title="College Production vs Drafted Comparables" badge={`n=${nbaBenchmarks.n} draftees · ${nbaBenchmarks.draftYearMin}–${nbaBenchmarks.draftYearMax}`}>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 14 }}>
                           {[
                             { lbl: 'PPG',  val: player.pts,    target: nbaBenchmarks.avgPpg, unit: '',  higherBetter: true },

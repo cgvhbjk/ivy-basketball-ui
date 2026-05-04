@@ -35,9 +35,10 @@ export function validateTeamSeasons(teamSeasons, targetMode = 'raw') {
   // Adjusted/raw mismatch detection
   if (targetMode === 'adjusted') {
     warnings.push(
-      'Target mode is "adjusted" (adjoe/adjde) but predictors are raw four factors. ' +
-      'Coefficients will absorb opponent-strength effects. ' +
-      'Use targetMode="raw" to avoid this mismatch.'
+      'Target mode is "adjusted" (adjoe/adjde) on raw four-factor predictors. ' +
+      'Coefficients are biased — they absorb opponent-strength effects the predictors cannot see. ' +
+      'Residuals are still meaningful (luck/execution analysis); coefficient interpretation is not. ' +
+      'Use targetMode="raw" if you need clean coefficient values.'
     )
   }
 

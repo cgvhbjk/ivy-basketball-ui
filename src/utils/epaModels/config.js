@@ -23,37 +23,44 @@ export const FIELD_MAP = {
   ftPct:    'ft_pct',
 }
 
-// Sign constraints for the JOINT model (predicting net efficiency = ppp - opp_ppp).
-// +1 = must be positive, -1 = must be negative, 0 = unconstrained.
-// Joint model sign constraints — all unconstrained because the joint 8-predictor model
-// is a baseline reference only and is never selected. Sign checking is meaningful only
-// for the split models (SIGN_CONSTRAINTS_OFF / SIGN_CONSTRAINTS_DEF below).
+// Sign constraints — empirically locked from the Phase-0 encoding audit.
+// See `encodingAudit.js` and the unit test in `__tests__/encodingAudit.test.js`.
+// Barttorvik's slice-JSON delivers `tov_o`, `tov_d`, `orb` with non-standard
+// directional encoding (likely percentile-rank-where-higher-is-better for the
+// TOV columns; `orb` is opposite-sign to textbook). Rather than guess from
+// the label, we fit a four-factor OLS once at audit time and lock in the
+// observed partial signs. The audit re-runs in CI; if a data refresh ever
+// changes these signs, the test fails loudly instead of silently producing
+// wrong-sign EPA coefficients.
+
+// Joint-model sign constraints, predicting net efficiency = ppp − opp_ppp.
+// Defensive coefficients flip relative to the split DEFENSE model because
+// `−opp_ppp` reverses their effect on net.
 export const SIGN_CONSTRAINTS = {
-  off_eFG:  0,
-  off_TOV:  0,
-  off_ORB:  0,
-  off_FTR:  0,
-  def_eFG:  0,
-  def_TOV:  0,
-  def_ORB:  0,
-  def_FTR:  0,
+  off_eFG:  1,
+  off_TOV:  1,   // verified empirically (β=+0.55 on standardized X)
+  off_ORB: -1,   // verified empirically (β=-2.63)
+  off_FTR:  1,
+  def_eFG: -1,
+  def_TOV: -1,   // empirically near-zero (β=+0.07); kept at theoretical sign — see audit warning
+  def_ORB:  1,   // own DRB% helps net (high drb → low adjde → high net)
+  def_FTR: -1,
 }
 
-// Sign constraints for the SPLIT OFFENSE model (predicting ppp — higher is better).
+// Split OFFENSE model — predicts ppp (higher is better).
 export const SIGN_CONSTRAINTS_OFF = {
-  off_eFG:  1,   // better shooting → more points
-  off_TOV:  0,   // unconstrained — tov_o encoding direction unverified
-  off_ORB:  0,   // unconstrained — orb encoding direction unverified
-  off_FTR:  1,   // drawing fouls → more points
+  off_eFG:  1,
+  off_TOV:  1,   // verified empirically (β=+0.55)
+  off_ORB: -1,   // verified empirically (β=-2.63) — `orb` is encoded opposite to textbook ORB%
+  off_FTR:  1,
 }
 
-// Sign constraints for the SPLIT DEFENSE model (predicting opp_ppp — higher is WORSE).
-// Opponent's own offensive factors naturally increase their scoring.
+// Split DEFENSE model — predicts opp_ppp (higher is WORSE for the defending team).
 export const SIGN_CONSTRAINTS_DEF = {
-  def_eFG:  1,   // opponent shoots better → opponent scores more
-  def_TOV:  0,   // unconstrained — tov_d encoding direction unverified
-  def_ORB:  0,   // unconstrained — drb encoding direction unverified
-  def_FTR:  1,   // opponent draws more fouls → opponent scores more
+  def_eFG:  1,
+  def_TOV:  1,   // empirically near-zero (β=+0.07); audit-recommended sign retained — flagged as low-confidence
+  def_ORB: -1,   // verified empirically (β=-2.42) — own DRB% reduces opp scoring
+  def_FTR:  1,
 }
 
 // Default pipeline configuration

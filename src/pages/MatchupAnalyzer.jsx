@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer, Tooltip } from 'recharts'
 import teamSeasons from '../data/teamSeasons.json'
 import players from '../data/players.json'
+import games from '../data/games.json'
 import { SCHOOLS, SCHOOL_META, SCHOOL_COLORS, YEARS, TEAM_METRIC_MAP } from '../data/constants.js'
 import useStore from '../store/useStore.js'
 import TeamBadge from '../components/shared/TeamBadge.jsx'
@@ -18,6 +19,12 @@ import {
   parseHeightIn, buildPositionWeightedAggregates, dataQualityCheck,
   classifySchemeFromRoster, computeTeamArchetype,
 } from '../utils/insightEngine.js'
+import { predictWinPctCalibrated } from '../utils/calibration.js'
+import { getWinModel } from '../utils/calibrationCache.js'
+
+// Win-probability model: reads from build-time precomputedStats.json when the
+// data hash matches; otherwise falls back to live fit. See calibration.js.
+const WIN_MODEL = getWinModel(games, teamSeasons)
 
 const SEL = { background: '#1a1a1a', border: '1px solid #2c2c2c', color: '#ebebeb', borderRadius: 6, padding: '6px 10px', fontSize: 13 }
 const CARD = { background: '#111111', border: '1px solid #2c2c2c', borderRadius: 12, padding: '20px 24px' }
@@ -49,9 +56,46 @@ const FOUR_FACTORS = [
 ]
 
 
-function predictWinPct(adjoeA, adjdeA, adjoeB, adjdeB) {
+// Calibrated win-probability for a hypothetical neutral-court matchup. The
+// slope, intercept, and home bonus all come from logistic regression on the
+// full Ivy-vs-Ivy game record (see calibration.js). The previous version used
+// a hard-coded slope of 0.12 with no intercept and no home effect.
+function predictWinPct(adjoeA, adjdeA, adjoeB, adjdeB, home = 0) {
   const diff = (adjoeA - adjdeA) - (adjoeB - adjdeB)
-  return 1 / (1 + Math.exp(-diff * 0.12))
+  return predictWinPctCalibrated(WIN_MODEL, diff, home)
+}
+
+// Qualitative band for a win-probability — keeps users from over-reading
+// 73% as "true probability to the percent". The model has finite precision
+// (slope SE ~0.026 on n=236, plus the irreducible single-game variance),
+// so we collapse to a textual band that matches the model's actual resolution.
+function winPctBand(p) {
+  if (p == null) return null
+  const fav = p >= 0.5 ? p : 1 - p
+  if (fav < 0.53) return { label: 'Toss-up',         level: 0 }
+  if (fav < 0.60) return { label: 'Slight edge',      level: 1 }
+  if (fav < 0.70) return { label: 'Clear favorite',   level: 2 }
+  if (fav < 0.80) return { label: 'Strong favorite',  level: 3 }
+  return                  { label: 'Heavy favorite',  level: 4 }
+}
+
+// Round to the nearest 5% band (e.g. 0.673 → "65–70%"). Used when the
+// projection is cross-year and the precise number is over-precise.
+function winPctRange(p) {
+  if (p == null) return null
+  const pct = p * 100
+  const lo  = Math.floor(pct / 5) * 5
+  return `${lo}–${lo + 5}%`
+}
+
+// "Same year" projections show the percent; "cross-year" projections collapse
+// to the band + 5%-range so the UI doesn't claim a precision the model can't
+// support across rating-recalibration boundaries.
+function fmtWinPctDisplay(p, crossYear) {
+  if (p == null) return null
+  const fav = p >= 0.5 ? p : 1 - p
+  if (crossYear) return winPctRange(fav)
+  return `${(fav * 100).toFixed(0)}%`
 }
 
 function inchesToFtIn(inches) {
@@ -226,22 +270,27 @@ export default function MatchupAnalyzer() {
   const crossYear = analyzerYearA !== analyzerYearB
 
   // Win probability KPI stat for header (declared before conclusions so it can be used inside)
-  const winPctStr   = winPctA !== null ? (winPctA * 100).toFixed(0) + '%' : null
-  const netA        = seasonA ? ((seasonA.adjoe - seasonA.adjde) > 0 ? '+' : '') + (seasonA.adjoe - seasonA.adjde).toFixed(1) : null
-  const netB        = seasonB ? ((seasonB.adjoe - seasonB.adjde) > 0 ? '+' : '') + (seasonB.adjoe - seasonB.adjde).toFixed(1) : null
+  const winPctStr  = winPctA !== null ? fmtWinPctDisplay(winPctA,        crossYear) : null
+  const winPctStrB = winPctA !== null ? fmtWinPctDisplay(1 - winPctA,    crossYear) : null
+  const winBand    = winPctBand(winPctA)
+  const netA       = seasonA ? ((seasonA.adjoe - seasonA.adjde) > 0 ? '+' : '') + (seasonA.adjoe - seasonA.adjde).toFixed(1) : null
+  const netB       = seasonB ? ((seasonB.adjoe - seasonB.adjde) > 0 ? '+' : '') + (seasonB.adjoe - seasonB.adjde).toFixed(1) : null
 
   const conclusions = useMemo(() => {
     if (!seasonA || !seasonB) return []
     const items = []
 
-    // Win probability
+    // Win probability — banded to match what the model actually supports.
     if (winPctA !== null) {
-      const fav = winPctA >= 0.5 ? metaA.abbr : metaB.abbr
-      const favPct = (Math.max(winPctA, 1 - winPctA) * 100).toFixed(0)
+      const fav     = winPctA >= 0.5 ? metaA.abbr : metaB.abbr
+      const display = fmtWinPctDisplay(Math.max(winPctA, 1 - winPctA), crossYear)
       const netDiff = Math.abs((seasonA.adjoe - seasonA.adjde) - (seasonB.adjoe - seasonB.adjde)).toFixed(1)
+      const phrase  = crossYear
+        ? `${winBand.label.toLowerCase()} at ~${display}`
+        : `${winBand.label.toLowerCase()} at ${display}`
       items.push({
         label: 'Win Prob.',
-        text: `${fav} projected at ${favPct}% — gap driven by a ${netDiff}-pt net efficiency differential (${metaA.abbr}: ${netA}, ${metaB.abbr}: ${netB}).`,
+        text: `${fav} ${phrase} — gap driven by a ${netDiff}-pt net efficiency differential (${metaA.abbr}: ${netA}, ${metaB.abbr}: ${netB}).${crossYear ? ' Cross-year projection: AdjOE/AdjDE are calibrated against different national pools each season, so the % reflects directional edge, not precise probability.' : ''}`,
         color: winPctA >= 0.5 ? colorA : colorB,
       })
     }
@@ -346,11 +395,15 @@ export default function MatchupAnalyzer() {
     const edgeTeam  = netEffA >= netEffB ? metaA.abbr : metaB.abbr
     const edgeColor = netEffA >= netEffB ? colorA : colorB
     const margin    = Math.abs(netEffA - netEffB).toFixed(1)
-    const probStr   = winPctA != null ? `${(Math.max(winPctA, 1 - winPctA) * 100).toFixed(0)}% win probability` : 'a net efficiency edge'
+    const probStr   = winPctA != null
+      ? (crossYear
+          ? `${winBand.label.toLowerCase()} (~${fmtWinPctDisplay(Math.max(winPctA, 1 - winPctA), true)} band)`
+          : `${winBand.label.toLowerCase()} at ${fmtWinPctDisplay(Math.max(winPctA, 1 - winPctA), false)}`)
+      : 'a net efficiency edge'
     const swingLabels = items.filter(i => ['Pace','Shooting','Turnovers','FT Attack','Defense'].includes(i.label)).map(i => i.label.toLowerCase())
     items.push({
       label: 'Bottom Line',
-      text: `${edgeTeam} is the stronger team by ${margin} pts/100 net efficiency (${probStr}). ${swingLabels.length ? `Key swing factors: ${swingLabels.join(', ')}.` : 'This is a tightly matched contest where execution will outweigh statistical advantages.'}${crossYear ? ' ⚠ Cross-year projection — treat as directional.' : ''}`,
+      text: `${edgeTeam} is the stronger team by ${margin} pts/100 net efficiency (${probStr}). ${swingLabels.length ? `Key swing factors: ${swingLabels.join(', ')}.` : 'This is a tightly matched contest where execution will outweigh statistical advantages.'}${crossYear ? ' ⚠ Cross-year projection — adjusted ratings shift across seasons; treat as directional.' : ''}`,
       color: edgeColor,
     })
 
@@ -363,12 +416,12 @@ export default function MatchupAnalyzer() {
         title={`${metaA.abbr} vs ${metaB.abbr}`}
         subtitle={`${metaA.fullName} ${analyzerYearA} · ${metaB.fullName} ${analyzerYearB} · Head-to-head breakdown`}
         stats={winPctA !== null ? [
-          { label: `${metaA.abbr} win probability`, value: winPctStr, color: colorA },
-          { label: `${metaB.abbr} win probability`, value: ((1-winPctA)*100).toFixed(0)+'%', color: colorB },
-          { label: `${metaA.abbr} Net Eff`,          value: netA,    color: netA?.startsWith('+') ? T.green : T.red },
-          { label: `${metaB.abbr} Net Eff`,          value: netB,    color: netB?.startsWith('+') ? T.green : T.red },
-          { label: `${metaA.abbr} Record`,           value: seasonA?.record ?? '—' },
-          { label: `${metaB.abbr} Record`,           value: seasonB?.record ?? '—' },
+          { label: `${metaA.abbr} win prob.`,          value: winPctStr,  color: colorA, note: winBand?.label },
+          { label: `${metaB.abbr} win prob.`,          value: winPctStrB, color: colorB },
+          { label: `${metaA.abbr} Net Eff`,            value: netA,    color: netA?.startsWith('+') ? T.green : T.red },
+          { label: `${metaB.abbr} Net Eff`,            value: netB,    color: netB?.startsWith('+') ? T.green : T.red },
+          { label: `${metaA.abbr} Record`,             value: seasonA?.record ?? '—' },
+          { label: `${metaB.abbr} Record`,             value: seasonB?.record ?? '—' },
         ] : []}
         controls={
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -392,7 +445,17 @@ export default function MatchupAnalyzer() {
               </select>
             </div>
             {crossYear && (
-              <span style={{ fontSize: 11, color: T.amber }}>⚠ Cross-year</span>
+              <span
+                title="Adjusted ratings (AdjOE/AdjDE) are calibrated against different national pools each year. Cross-year projections show banded probability instead of a precise percent."
+                style={{
+                  fontSize: 11, fontWeight: 600,
+                  background: '#f59e0b22', color: '#f59e0b',
+                  border: '1px solid #f59e0b66',
+                  borderRadius: 4, padding: '3px 8px',
+                  letterSpacing: '0.04em',
+                }}>
+                ⚠ Cross-year — banded only
+              </span>
             )}
           </div>
         }
@@ -429,7 +492,12 @@ export default function MatchupAnalyzer() {
                     <div style={{ fontSize: 11, color: '#4b5563' }}>{year}</div>
                   </div>
                 </div>
-                <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 2 }}>Head Coach</div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 2 }}>
+                  Head Coach
+                  {coach.approximate && (
+                    <span title="Coach metadata is hand-curated and may need verification" style={{ marginLeft: 6, fontSize: 9, color: '#f59e0b', fontWeight: 600, letterSpacing: '0.04em' }}>APPROX</span>
+                  )}
+                </div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: '#ebebeb', marginBottom: 10 }}>{coach.name}</div>
                 <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 2 }}>Playstyle</div>
                 <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 12, lineHeight: 1.5 }}>{coach.style}</div>

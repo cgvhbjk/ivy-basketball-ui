@@ -1,8 +1,24 @@
 // Pure statistical utilities — no React imports
+import { olsSolve as _olsSolve, computeFit as _computeFit } from './epaModels/matrixOps.js'
+import { zscore, pickKBySilhouette } from './clustering.js'
 
-export function pearsonCorrelation(xs, ys) {
+// Default minimum sample size to compute a correlation. With fewer than 4
+// pairs Pearson r is unstable and dominated by chance, so we return null and
+// let the UI render a placeholder rather than show a misleading "0".
+const PEARSON_MIN_N = 4
+
+/**
+ * Pearson correlation coefficient r ∈ [-1, 1].
+ * Returns null when n < minN or when either column has zero variance —
+ * callers must handle the null instead of treating "0" as "no signal".
+ * @param {number[]} xs
+ * @param {number[]} ys
+ * @param {{minN?: number}} [opts]
+ * @returns {?number}
+ */
+export function pearsonCorrelation(xs, ys, { minN = PEARSON_MIN_N } = {}) {
   const n = xs.length
-  if (n < 4) return 0
+  if (n < minN) return null
   const meanX = xs.reduce((s, v) => s + v, 0) / n
   const meanY = ys.reduce((s, v) => s + v, 0) / n
   let num = 0, sdX = 0, sdY = 0
@@ -14,30 +30,205 @@ export function pearsonCorrelation(xs, ys) {
     sdY += dy * dy
   }
   const denom = Math.sqrt(sdX * sdY)
-  return denom === 0 ? 0 : num / denom
+  return denom === 0 ? null : num / denom
+}
+
+// Deterministic 32-bit PRNG so bootstrap/permutation results are reproducible
+// across renders. Same algorithm as in epaModels/models.js (mulberry32).
+function _mulberry32(seed) {
+  let a = seed >>> 0
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0
+    let t = a
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+/**
+ * Bootstrap percentile confidence interval for Pearson r.
+ * @param {number[]} xs
+ * @param {number[]} ys
+ * @param {{B?: number, alpha?: number, seed?: number, minN?: number}} [opts]
+ *   B (default 1000) bootstrap iterations, alpha (default 0.05) two-sided
+ *   coverage error, seed for the deterministic RNG.
+ * @returns {?{r: number, ciLow: number, ciHigh: number, n: number, B: number}}
+ */
+export function pearsonBootstrapCI(xs, ys, { B = 5000, alpha = 0.05, seed = 1, minN = PEARSON_MIN_N } = {}) {
+  const n = xs.length
+  if (n < minN) return null
+  const r = pearsonCorrelation(xs, ys, { minN })
+  if (r == null) return null
+
+  const rand = _mulberry32(seed)
+  const samples = new Array(B)
+  const xb = new Array(n)
+  const yb = new Array(n)
+  for (let b = 0; b < B; b++) {
+    for (let i = 0; i < n; i++) {
+      const k = Math.floor(rand() * n)
+      xb[i] = xs[k]; yb[i] = ys[k]
+    }
+    const rb = pearsonCorrelation(xb, yb, { minN })
+    samples[b] = rb == null ? 0 : rb
+  }
+  samples.sort((a, b) => a - b)
+  const lo = samples[Math.max(0, Math.floor((alpha / 2) * B))]
+  const hi = samples[Math.min(B - 1, Math.ceil((1 - alpha / 2) * B) - 1)]
+  return { r, ciLow: lo, ciHigh: hi, n, B }
+}
+
+/**
+ * Two-sided permutation p-value for Pearson r — distribution-free, robust
+ * to the small-sample assumption violations that the t-approximation makes.
+ * Uses the Phipson–Smyth `(extreme + 1) / (B + 1)` numerator/denominator so
+ * we never report p = 0 with a finite shuffle budget.
+ * @param {number[]} xs
+ * @param {number[]} ys
+ * @param {{B?: number, seed?: number, minN?: number}} [opts]
+ * @returns {?number} two-sided p-value, or null when n < minN.
+ */
+export function pearsonPermutationP(xs, ys, { B = 5000, seed = 7, minN = PEARSON_MIN_N } = {}) {
+  const n = xs.length
+  if (n < minN) return null
+  const rObs = pearsonCorrelation(xs, ys, { minN })
+  if (rObs == null) return null
+  const absObs = Math.abs(rObs)
+
+  const rand = _mulberry32(seed)
+  const ysCopy = ys.slice()
+  let extreme = 0
+  for (let b = 0; b < B; b++) {
+    // Fisher–Yates shuffle of ysCopy in-place
+    for (let i = n - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1))
+      ;[ysCopy[i], ysCopy[j]] = [ysCopy[j], ysCopy[i]]
+    }
+    const rPerm = pearsonCorrelation(xs, ysCopy, { minN })
+    if (rPerm != null && Math.abs(rPerm) >= absObs) extreme++
+  }
+  // +1 numerator/denominator (Phipson & Smyth) avoids reporting p=0
+  return (extreme + 1) / (B + 1)
+}
+
+/**
+ * Benjamini–Hochberg FDR control. Given an array of p-values and a target
+ * false-discovery rate q, return a parallel boolean array marking which
+ * tests survive (true = reject the null at FDR ≤ q). Standard procedure:
+ *   1. Sort p-values ascending: p_(1) ≤ p_(2) ≤ ... ≤ p_(m)
+ *   2. Find largest k such that p_(k) ≤ k/m · q
+ *   3. Reject H_0 for all i ≤ k, in original (unsorted) positions.
+ *
+ * Use this whenever you've scanned many (x, y) pairs and want to know which
+ * "significant" hits would still survive after multiple-testing correction.
+ *
+ * @param {Array<?number>} pValues — null entries (e.g. n too small) are treated as failed tests.
+ * @param {number} [q=0.05] — target false-discovery rate.
+ * @returns {Array<boolean>} parallel survival mask.
+ */
+export function benjaminiHochberg(pValues, q = 0.05) {
+  const m = pValues.length
+  // Pair (originalIndex, p), drop nulls so they're never "rejected"
+  const valid = []
+  for (let i = 0; i < m; i++) if (pValues[i] != null) valid.push({ i, p: pValues[i] })
+  valid.sort((a, b) => a.p - b.p)
+
+  // Largest k with p_(k) ≤ k/m · q (denominator is m — total including nulls,
+  // not just valid tests; this is the conservative-but-standard choice).
+  let kMax = -1
+  for (let k = 0; k < valid.length; k++) {
+    const threshold = ((k + 1) / m) * q
+    if (valid[k].p <= threshold) kMax = k
+  }
+  const survivors = new Set()
+  for (let k = 0; k <= kMax; k++) survivors.add(valid[k].i)
+
+  return pValues.map((_, i) => survivors.has(i))
+}
+
+// Subtract per-year means from each value. Removes shared league-wide
+// trends (e.g., a year where every team's TOV% drops) so the correlation
+// reflects within-year team-to-team differences instead of cross-year drift.
+function _withinYearDemean(rows, xKey, yKey) {
+  const yearStats = {}
+  for (const r of rows) {
+    const y = r.year
+    if (!yearStats[y]) yearStats[y] = { xs: [], ys: [] }
+    yearStats[y].xs.push(r[xKey])
+    yearStats[y].ys.push(r[yKey])
+  }
+  const yearMean = {}
+  for (const y of Object.keys(yearStats)) {
+    const { xs, ys } = yearStats[y]
+    yearMean[y] = {
+      x: xs.reduce((s, v) => s + v, 0) / xs.length,
+      y: ys.reduce((s, v) => s + v, 0) / ys.length,
+    }
+  }
+  return rows.map(r => ({
+    ...r,
+    [xKey]: r[xKey] - yearMean[r.year].x,
+    [yKey]: r[yKey] - yearMean[r.year].y,
+  }))
 }
 
 export function computeRelationship(teamSeasons, xKey, yKey, filters = {}) {
-  const { yearRange = [2022, 2025] } = filters
-  const rows = teamSeasons.filter(s => {
+  const { yearRange = [2022, 2025], withCI = true, controlForYear = false } = filters
+  const baseRows = teamSeasons.filter(s => {
     if (s.year < yearRange[0] || s.year > yearRange[1]) return false
     if (s[xKey] == null || s[yKey] == null) return false
     return true
   })
-  const xs = rows.map(s => s[xKey])
-  const ys = rows.map(s => s[yKey])
+  // When requested, residualise on year so league-wide year-to-year shifts
+  // don't drive the pooled correlation. Display points stay on the original
+  // scale (more readable scatter); only the correlation/CI/p use the
+  // residualised values.
+  const statsRows = controlForYear && baseRows.length > 0
+    ? _withinYearDemean(baseRows, xKey, yKey)
+    : baseRows
+  const xs = statsRows.map(s => s[xKey])
+  const ys = statsRows.map(s => s[yKey])
+  const r = pearsonCorrelation(xs, ys)
+  // Bootstrap CI + permutation p-value give the consumer a real confidence
+  // signal (instead of fixed |r| thresholds that ignore sample size). Skipped
+  // when the caller doesn't need them — the heaviest path is ~50ms at n=32.
+  const ci = withCI ? pearsonBootstrapCI(xs, ys) : null
+  const pValue = withCI ? pearsonPermutationP(xs, ys) : null
   return {
-    points: rows.map(s => ({ x: s[xKey], y: s[yKey], school: s.school, year: s.year })),
-    correlation: parseFloat(pearsonCorrelation(xs, ys).toFixed(3)),
-    n: rows.length,
+    points: baseRows.map(s => ({ x: s[xKey], y: s[yKey], school: s.school, year: s.year })),
+    correlation: r == null ? null : +r.toFixed(3),
+    ciLow:  ci?.ciLow != null ? +ci.ciLow.toFixed(3) : null,
+    ciHigh: ci?.ciHigh != null ? +ci.ciHigh.toFixed(3) : null,
+    pValue: pValue != null ? +pValue.toFixed(3) : null,
+    controlForYear,
+    n: baseRows.length,
   }
 }
 
-export function scoreInsight(correlation, n) {
+// Score a relationship for display. Confidence now combines:
+//   - sample size (n ≥ 6 required at all)
+//   - effect size (|r|)
+//   - statistical significance (permutation p-value, when supplied)
+//   - bootstrap CI excluding 0 (when supplied)
+// pValue and ciLow/ciHigh are optional to preserve back-compatibility with
+// callers that don't compute them yet.
+export function scoreInsight(correlation, n, opts = {}) {
+  const { pValue = null, ciLow = null, ciHigh = null } = opts
+  if (correlation == null) {
+    return { valid: false, strength: 0, confidence: 'LOW', reason: 'No correlation (sample too small)' }
+  }
   const absR = Math.abs(correlation)
   if (n < 6) return { valid: false, strength: absR, confidence: 'LOW', reason: 'Fewer than 6 data points' }
   if (absR < 0.20) return { valid: false, strength: absR, confidence: 'LOW', reason: 'Effect too small (|r| < 0.20)' }
-  const confidence = absR >= 0.55 ? 'HIGH' : absR >= 0.35 ? 'MEDIUM' : 'LOW'
+  if (pValue != null && pValue > 0.05) {
+    return { valid: false, strength: absR, confidence: 'LOW', reason: `Not significant (permutation p = ${pValue.toFixed(2)})` }
+  }
+  const ciExcludesZero = ciLow != null && ciHigh != null && (ciLow > 0 || ciHigh < 0)
+  let confidence
+  if (absR >= 0.55 && (pValue == null || pValue < 0.05) && (ciLow == null || ciExcludesZero)) confidence = 'HIGH'
+  else if (absR >= 0.35) confidence = 'MEDIUM'
+  else confidence = 'LOW'
   return { valid: true, strength: absR, confidence, reason: null }
 }
 
@@ -52,11 +243,47 @@ export function timeWindowComparison(teamSeasons, xKey, yKey) {
     )
     if (rows.length < 4) return { ...w, r: null, n: rows.length }
     const r = pearsonCorrelation(rows.map(s => s[xKey]), rows.map(s => s[yKey]))
-    return { ...w, r: parseFloat(r.toFixed(3)), n: rows.length }
+    return { ...w, r: r == null ? null : +r.toFixed(3), n: rows.length }
   })
 }
 
-export function detectThreshold(teamSeasons, xKey, yKey, yearRange = [2022, 2025]) {
+// Internal: best |Δmean| across all interior split points of a sorted (x,y)
+// list. Used by detectThreshold and its permutation-test sibling.
+function _bestSplitEffect(sortedRows) {
+  const n = sortedRows.length
+  if (n < 6) return null
+  let bestIdx = -1
+  let bestEffect = 0
+  // Running sums for O(n) split-point sweep
+  const ys = sortedRows.map(r => r.y)
+  const totalSum = ys.reduce((s, v) => s + v, 0)
+  let belowSum = ys[0] + ys[1]  // first 2 already in "below" before loop starts
+  for (let i = 2; i < n - 2; i++) {
+    belowSum += ys[i]
+    const belowN = i + 1
+    const aboveN = n - belowN
+    const mBelow = belowSum / belowN
+    const mAbove = (totalSum - belowSum) / aboveN
+    const effect = Math.abs(mAbove - mBelow)
+    if (effect > bestEffect) {
+      bestEffect = effect
+      bestIdx = i
+    }
+  }
+  if (bestIdx < 0) return null
+  return { idx: bestIdx, effect: bestEffect }
+}
+
+// Threshold detection — searches every interior cut-point and reports the one
+// that maximises |mean_above − mean_below|. With small n this is biased upward
+// (it cherry-picks the best of n−4 candidates), so we attach a permutation
+// p-value: shuffle y vs x, recompute the best effect, count how often the
+// shuffled effect exceeds the observed. If p > pMax, return null — the
+// "threshold" is indistinguishable from chance.
+export function detectThreshold(
+  teamSeasons, xKey, yKey, yearRange = [2022, 2025],
+  { pMax = 0.05, B = 5000, seed = 17 } = {}
+) {
   const rows = teamSeasons
     .filter(s =>
       s.year >= yearRange[0] && s.year <= yearRange[1] &&
@@ -65,31 +292,41 @@ export function detectThreshold(teamSeasons, xKey, yKey, yearRange = [2022, 2025
     .map(s => ({ x: s[xKey], y: s[yKey] }))
     .sort((a, b) => a.x - b.x)
 
-  if (rows.length < 6) return null
+  const obs = _bestSplitEffect(rows)
+  if (obs == null) return null
 
-  const avg = arr => arr.reduce((s, v) => s + v, 0) / arr.length
-  let best = null, bestEffect = 0
-
-  for (let i = 2; i < rows.length - 2; i++) {
-    const threshold = (rows[i].x + rows[i + 1].x) / 2
-    const below = rows.slice(0, i + 1).map(r => r.y)
-    const above = rows.slice(i + 1).map(r => r.y)
-    const mBelow = avg(below)
-    const mAbove = avg(above)
-    const effect = Math.abs(mAbove - mBelow)
-    if (effect > bestEffect) {
-      bestEffect = effect
-      best = {
-        threshold: parseFloat(threshold.toFixed(1)),
-        belowMean: parseFloat(mBelow.toFixed(3)),
-        aboveMean: parseFloat(mAbove.toFixed(3)),
-        effect: parseFloat(effect.toFixed(3)),
-        belowN: i + 1,
-        aboveN: rows.length - i - 1,
-      }
+  // Permutation test: shuffle y values, keep x sorted, recompute best Δ.
+  const rand = _mulberry32(seed)
+  const ysCopy = rows.map(r => r.y)
+  const xsSorted = rows.map(r => r.x)
+  let extreme = 0
+  for (let b = 0; b < B; b++) {
+    for (let i = ysCopy.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1))
+      ;[ysCopy[i], ysCopy[j]] = [ysCopy[j], ysCopy[i]]
     }
+    const permRows = xsSorted.map((x, i) => ({ x, y: ysCopy[i] }))
+    const permObs = _bestSplitEffect(permRows)
+    if (permObs && permObs.effect >= obs.effect) extreme++
   }
-  return best
+  const pValue = (extreme + 1) / (B + 1)
+  if (pValue > pMax) return null
+
+  // Reconstruct the threshold details for the winning split
+  const i = obs.idx
+  const belowYs = rows.slice(0, i + 1).map(r => r.y)
+  const aboveYs = rows.slice(i + 1).map(r => r.y)
+  const avg = arr => arr.reduce((s, v) => s + v, 0) / arr.length
+  const threshold = (rows[i].x + rows[i + 1].x) / 2
+  return {
+    threshold: +threshold.toFixed(1),
+    belowMean: +avg(belowYs).toFixed(3),
+    aboveMean: +avg(aboveYs).toFixed(3),
+    effect:    +obs.effect.toFixed(3),
+    belowN: i + 1,
+    aboveN: rows.length - i - 1,
+    pValue: +pValue.toFixed(3),
+  }
 }
 
 // Linear regression — returns {slope, intercept} for {x, y} point array.
@@ -125,35 +362,200 @@ export function detectStyleInteractions(teamSeasons, xKey, yKey, styleKey = 'thr
 
   return buckets.map(b => {
     const rows = teamSeasons.filter(s => b.test(s) && s[xKey] != null && s[yKey] != null)
-    if (rows.length < 3) return { label: b.label, r: null, n: rows.length }
+    if (rows.length < 4) return { label: b.label, r: null, n: rows.length }
     const r = pearsonCorrelation(rows.map(s => s[xKey]), rows.map(s => s[yKey]))
-    return { label: b.label, r: parseFloat(r.toFixed(3)), n: rows.length }
+    return { label: b.label, r: r == null ? null : +r.toFixed(3), n: rows.length }
   })
 }
 
 // ── Scheme classification ─────────────────────────────────────────────────────
+//
+// All thresholds are calibrated against the 2022–2025 Ivy team-season distribution
+// (32 observations) — they're empirical, not normative. Re-derive when the dataset
+// expands beyond Ivy or covers more years.
+
+// Ivy 2022–25 ranges: tempo 60–73 (median ~68), three_rate_o 28–48 (median ~36).
+// `fast` cut at 68 splits the league roughly into halves; `heavy3` cut at 40
+// captures the perimeter-dominant teams (~upper third).
+const SCHEME_OFF_FAST_TEMPO   = 68
+const SCHEME_OFF_HEAVY_3_RATE = 40
 
 export function classifyOffScheme(season) {
-  const fast   = season.tempo >= 68
-  const heavy3 = season.three_rate_o >= 40
+  const fast   = season.tempo        >= SCHEME_OFF_FAST_TEMPO
+  const heavy3 = season.three_rate_o >= SCHEME_OFF_HEAVY_3_RATE
   if (fast  && heavy3)  return 'Run & Gun'
   if (fast  && !heavy3) return 'Transition Attack'
   if (!fast && heavy3)  return 'Spread Offense'
   return 'Grind It Out'
 }
 
-// Thresholds: tov_d (TOV% Forced) ≥ 31 → elite pressure (Ivy range ~17–35%);
-// blk_d (block rate = blocks ÷ opp FGA × 100) ≥ 11 → elite rim protection (Ivy range ~6.5–12.7%);
-// efg_d (eFG% allowed) ≤ 50 → perimeter lockdown.
+// Defensive cuts (Ivy 2022–25 ranges shown):
+//   tov_d  ≥ 31  — TOV% forced; Ivy range ~17–35, top-decile is ≥31 ⇒ elite pressure
+//   blk_d  ≥ 11  — block rate (blocks ÷ opp FGA × 100); Ivy range ~6.5–12.7, ≥11 ⇒ rim protection
+//   efg_d  ≤ 50  — eFG% allowed; Ivy median ~52, ≤50 ⇒ perimeter lockdown
+const SCHEME_DEF_PRESSURE_TOV     = 31
+const SCHEME_DEF_RIM_BLOCK_RATE   = 11
+const SCHEME_DEF_COVERAGE_EFG_MAX = 50
+
 export function classifyDefScheme(season) {
-  if (season.tov_d  >= 31) return 'High Pressure'
-  if (season.blk_d  >= 11) return 'Rim Protection'
-  if (season.efg_d  <= 50) return 'Coverage'
+  if (season.tov_d >= SCHEME_DEF_PRESSURE_TOV)     return 'High Pressure'
+  if (season.blk_d >= SCHEME_DEF_RIM_BLOCK_RATE)   return 'Rim Protection'
+  if (season.efg_d <= SCHEME_DEF_COVERAGE_EFG_MAX) return 'Coverage'
   return 'Standard'
 }
 
 export const OFF_SCHEME_ORDER = ['Run & Gun', 'Transition Attack', 'Spread Offense', 'Grind It Out']
 export const DEF_SCHEME_ORDER = ['High Pressure', 'Rim Protection', 'Coverage', 'Standard']
+
+// ── K-means scheme clustering (Phase 4 #2) ───────────────────────────────────
+// Empirical alternative to the heuristic classifiers above. Clusters team-
+// seasons in the joint feature space [tempo, three_rate_o, efg_o, tov_o,
+// blk_d, tov_d, efg_d] (the spec asked for tempo/three_rate_o/blk_d/tov_d/
+// efg_d "...", I added efg_o + tov_o so the offensive identity isn't
+// dominated by tempo alone). Picks k ∈ {3,4,5} by mean silhouette.
+
+const CLUSTER_FEATURES = ['tempo', 'three_rate_o', 'efg_o', 'tov_o', 'blk_d', 'tov_d', 'efg_d']
+
+function _labelClusterByCentroid(centroid, featureNames) {
+  // Build a descriptive name from the centroid's most extreme features
+  // (in z-score space). e.g., a centroid with z(tempo)=+1.4 and z(three_rate_o)=+1.2
+  // gets called "Fast 3-Heavy". The rules below are intentionally simple — they
+  // describe what the centroid measures, not what a coach calls it.
+  const get = name => centroid[featureNames.indexOf(name)]
+  const tempo  = get('tempo')
+  const three  = get('three_rate_o')
+  const tovD   = get('tov_d')
+  const blkD   = get('blk_d')
+  const efgD   = get('efg_d')
+
+  const parts = []
+  if (tempo  >  0.6) parts.push('Fast')
+  if (tempo  < -0.6) parts.push('Slow')
+  if (three  >  0.6) parts.push('3-Heavy')
+  if (three  < -0.6) parts.push('Inside-Heavy')
+  if (tovD   >  0.6) parts.push('Pressure')
+  if (blkD   >  0.6) parts.push('Rim-Protection')
+  if (efgD   < -0.6) parts.push('Coverage')
+  return parts.length ? parts.join(' ') : 'Balanced'
+}
+
+/**
+ * Cluster team-seasons into empirical scheme groups via k-means on
+ * z-scored four-factor + tempo features. Auto-picks k by silhouette.
+ *
+ * @param {Array<Object>} teamSeasons
+ * @param {{ ks?: number[], features?: string[], seed?: number }} [opts]
+ * @returns {{
+ *   k: number,
+ *   silhouette: number,
+ *   scoresByK: Record<number, number>,
+ *   features: string[],
+ *   centroids: number[][],   // z-scored
+ *   centroidsRaw: number[][], // un-z-scored, in original feature units
+ *   labelMap: Record<number, string>,  // cluster index → descriptive label
+ *   rows: Array<{ school, year, cluster, label }>,
+ * }}
+ */
+export function clusterTeamSchemes(teamSeasons, opts = {}) {
+  const { ks = [3, 4, 5], features = CLUSTER_FEATURES, seed = 11 } = opts
+  const valid = teamSeasons.filter(s => features.every(k => s[k] != null && Number.isFinite(s[k])))
+  if (valid.length < Math.max(...ks) + 1) {
+    return { k: null, silhouette: 0, scoresByK: {}, features, centroids: [], centroidsRaw: [], labelMap: {}, rows: [] }
+  }
+  const raw = valid.map(s => features.map(f => s[f]))
+  const { X, means, sds } = zscore(raw)
+  const fit = pickKBySilhouette(X, ks, { seed, restarts: 5 })
+
+  // Map cluster index → descriptive label using centroid z-scores.
+  const labelMap = {}
+  const seen = new Map()
+  for (let c = 0; c < fit.centroids.length; c++) {
+    let lab = _labelClusterByCentroid(fit.centroids[c], features)
+    // Guard against duplicate labels (two centroids both "Balanced").
+    if (seen.has(lab)) {
+      const n = seen.get(lab) + 1
+      seen.set(lab, n)
+      lab = `${lab} #${n}`
+    } else {
+      seen.set(lab, 1)
+    }
+    labelMap[c] = lab
+  }
+
+  const centroidsRaw = fit.centroids.map(c => c.map((z, i) => +(z * sds[i] + means[i]).toFixed(2)))
+
+  const rows = valid.map((s, i) => ({
+    school: s.school, year: s.year,
+    cluster: fit.labels[i],
+    label:   labelMap[fit.labels[i]],
+  }))
+
+  return {
+    k: fit.k,
+    silhouette: +fit.silhouette.toFixed(4),
+    scoresByK:  fit.scoresByK,
+    features,
+    centroids: fit.centroids.map(c => c.map(v => +v.toFixed(3))),
+    centroidsRaw,
+    labelMap,
+    rows,
+  }
+}
+
+// Soft validation against coachMeta playstyle free-text. For each team-season
+// row, check whether any keyword from the cluster label appears in the
+// associated coach's playstyle string. Reports an agreement rate per cluster
+// — diagnostic, not pass/fail.
+export function validateClustersAgainstCoachMeta(clusterResult, getCoach) {
+  if (!clusterResult.rows?.length) return { rows: [], byCluster: {} }
+
+  const tokenize = label => label.toLowerCase().split(/\s+/).filter(Boolean)
+  const checkPair = (label, playstyle) => {
+    if (!playstyle) return null  // null = no coach text → can't validate
+    const tokens = tokenize(label)
+    const txt = playstyle.toLowerCase()
+    // "Balanced" matches if no stronger style is present in the text either.
+    if (label.startsWith('Balanced')) {
+      const styleWords = ['fast', 'slow', 'three', 'press', 'rim', 'inside', 'cover']
+      return !styleWords.some(w => txt.includes(w))
+    }
+    // Loose substring match: each token (e.g., "fast", "3-heavy") needs a
+    // representative word in the coach text. "3-heavy" → "three" or "perimeter".
+    return tokens.some(tok => {
+      if (tok === '3-heavy')        return /three|perim|outside|3-?point/.test(txt)
+      if (tok === 'inside-heavy')   return /inside|paint|post/.test(txt)
+      if (tok === 'fast')           return /fast|transition|tempo|push/.test(txt)
+      if (tok === 'slow')           return /slow|deliberat|grind|half-?court/.test(txt)
+      if (tok === 'pressure')       return /press|trap|harass|aggressive/.test(txt)
+      if (tok === 'rim-protection') return /rim|block|paint|interior/.test(txt)
+      if (tok === 'coverage')       return /coverage|matchup|zone|lockdown/.test(txt)
+      return txt.includes(tok)
+    })
+  }
+
+  const enriched = clusterResult.rows.map(r => {
+    const meta = getCoach ? getCoach(r.school, r.year) : null
+    const agree = checkPair(r.label, meta?.playstyle ?? null)
+    return { ...r, playstyle: meta?.playstyle ?? null, agree }
+  })
+
+  const byCluster = {}
+  for (const r of enriched) {
+    const c = r.cluster
+    if (!byCluster[c]) byCluster[c] = { label: r.label, total: 0, evaluated: 0, agreed: 0 }
+    byCluster[c].total++
+    if (r.agree !== null) {
+      byCluster[c].evaluated++
+      if (r.agree) byCluster[c].agreed++
+    }
+  }
+  for (const c of Object.keys(byCluster)) {
+    const b = byCluster[c]
+    b.agreementRate = b.evaluated ? +(b.agreed / b.evaluated).toFixed(2) : null
+  }
+
+  return { rows: enriched, byCluster }
+}
 
 export function schemeBreakdown(teamSeasons, schemeType, metricKey) {
   const classify = schemeType === 'off' ? classifyOffScheme : classifyDefScheme
@@ -227,9 +629,10 @@ export function computeBiodataRelationship(rosterAggs, teamSeasons, biodataKey, 
     })
     .filter(Boolean)
   const xs = joined.map(r => r.x), ys = joined.map(r => r.y)
+  const r = pearsonCorrelation(xs, ys)
   return {
     points: joined,
-    correlation: joined.length >= 4 ? parseFloat(pearsonCorrelation(xs, ys).toFixed(3)) : 0,
+    correlation: r == null ? null : +r.toFixed(3),
     n: joined.length,
   }
 }
@@ -237,21 +640,26 @@ export function computeBiodataRelationship(rosterAggs, teamSeasons, biodataKey, 
 export function computePlayerRelationship(players, xKey, yKey) {
   const rows = players.filter(p => p[xKey] != null && p[yKey] != null && p.min_pg >= 10)
   const xs = rows.map(p => p[xKey]), ys = rows.map(p => p[yKey])
+  const r = pearsonCorrelation(xs, ys)
   return {
     points: rows.map(p => ({ x: p[xKey], y: p[yKey], school: p.school, name: p.name, year: p.year, pos_type: p.pos_type })),
-    correlation: rows.length >= 4 ? parseFloat(pearsonCorrelation(xs, ys).toFixed(3)) : 0,
+    correlation: r == null ? null : +r.toFixed(3),
     n: rows.length,
   }
 }
 
 export function generateInsightText(xLabel, yLabel, correlation, n, threshold) {
+  if (correlation == null) {
+    return `${xLabel} → ${yLabel}: not enough data to estimate a correlation (n = ${n}).`
+  }
   const dir = correlation > 0 ? 'positively' : 'negatively'
   const strength =
     Math.abs(correlation) >= 0.55 ? 'strongly' :
     Math.abs(correlation) >= 0.35 ? 'moderately' : 'weakly'
   let text = `${xLabel} is ${strength} ${dir} correlated with ${yLabel} (r = ${correlation.toFixed(2)}, n = ${n} team-seasons).`
   if (threshold) {
-    text += ` Teams with ${xLabel} above ${threshold.threshold} average ${threshold.aboveMean.toFixed(3)} ${yLabel} vs ${threshold.belowMean.toFixed(3)} below (Δ ${threshold.effect.toFixed(3)}).`
+    const pNote = threshold.pValue != null ? `, permutation p = ${threshold.pValue}` : ''
+    text += ` Teams with ${xLabel} above ${threshold.threshold} average ${threshold.aboveMean.toFixed(3)} ${yLabel} vs ${threshold.belowMean.toFixed(3)} below (Δ ${threshold.effect.toFixed(3)}${pNote}).`
   }
   return text
 }
@@ -378,9 +786,12 @@ export function buildRosterAggregatesWeighted(players) {
       avg_height_in:  wHt  != null ? +wHt.toFixed(1)  : null,
       avg_weight_lbs: wWt  != null ? +wWt.toFixed(1)  : null,
       avg_experience: wExp != null ? +wExp.toFixed(2)  : null,
-      pct_guards:     +(guards.length   / n * 100).toFixed(1),
-      pct_forwards:   +(forwards.length / n * 100).toFixed(1),
-      pct_bigs:       +(bigs.length     / n * 100).toFixed(1),
+      // pct_X = minute share (not headcount). The "weighted aggregate" name
+      // promised playing-time weighting; counting heads gave a 35-min and a
+      // 5-min guard the same weight, which contradicts the rest of this file.
+      pct_guards:     minShare(guards)   ?? 0,
+      pct_forwards:   minShare(forwards) ?? 0,
+      pct_bigs:       minShare(bigs)     ?? 0,
       missing_height: enriched.filter(p => p._height_in == null).length,
       // Guard position averages
       guard_avg_height: pa(guards, '_height_in'),
@@ -839,15 +1250,31 @@ export function generateTrainingPlan(player, combineInputs = {}) {
 
 // ── NBA Prospect Comparison ───────────────────────────────────────────────────
 
+// Optional draft-year filter — applied at each entry point so the UI can
+// scope all NBA-combine comparisons to a recent window. Without filtering,
+// the pool spans every draft year present in the JSON (currently 2019–2024).
+function _filterByDraftYear(pool, { draftYearMin = null, draftYearMax = null } = {}) {
+  if (draftYearMin == null && draftYearMax == null) return pool
+  return pool.filter(p => {
+    if (p.draft_year == null) return false
+    if (draftYearMin != null && p.draft_year < draftYearMin) return false
+    if (draftYearMax != null && p.draft_year > draftYearMax) return false
+    return true
+  })
+}
+
 // Find NBA prospects from combine data whose position + height closely match an Ivy player.
 // maxHeightDiff: how many inches away is acceptable (default 2")
+// draftYearMin / draftYearMax: optional bounds on the draft class to compare against.
 // Returns array sorted by height proximity then draft pick.
-export function findNBAComparables(player, nbaCombine, { maxHeightDiff = 2, n = 5 } = {}) {
+export function findNBAComparables(player, nbaCombine, opts = {}) {
+  const { maxHeightDiff = 2, n = 5 } = opts
   const heightIn = parseHeightIn(player.height)
   const pos = broadPositionGroup(player.pos_type)
   if (!heightIn || !pos) return []
 
-  return nbaCombine
+  const pool = _filterByDraftYear(nbaCombine, opts)
+  return pool
     .filter(p =>
       p.pos_group === pos &&
       Math.abs(p.height_in - heightIn) <= maxHeightDiff
@@ -859,17 +1286,20 @@ export function findNBAComparables(player, nbaCombine, { maxHeightDiff = 2, n = 
 
 // Compute height percentile for a player within their position group's NBA draft class.
 // Returns 0–100 (100 = tallest).
-export function computeNBAHeightPercentile(heightIn, posGroup, nbaCombine) {
-  const pool = nbaCombine.filter(p => p.pos_group === posGroup && p.height_in != null)
+export function computeNBAHeightPercentile(heightIn, posGroup, nbaCombine, opts = {}) {
+  const filtered = _filterByDraftYear(nbaCombine, opts)
+  const pool = filtered.filter(p => p.pos_group === posGroup && p.height_in != null)
   if (!pool.length) return null
   const below = pool.filter(p => p.height_in <= heightIn).length
   return Math.round((below / pool.length) * 100)
 }
 
 // Aggregate college benchmarks for NBA prospects of a given position who played in US college.
-// Returns averages + percentile function for each stat.
-export function computeNBACollegeBenchmarks(posGroup, nbaCombine) {
-  const pool = nbaCombine.filter(p =>
+// Returns averages + percentile function for each stat. Adds an `n` and `draftYearRange`
+// so callers can surface "compared against X draftees from Y–Z".
+export function computeNBACollegeBenchmarks(posGroup, nbaCombine, opts = {}) {
+  const filtered = _filterByDraftYear(nbaCombine, opts)
+  const pool = filtered.filter(p =>
     p.pos_group === posGroup &&
     p.college != null &&
     p.college_ts_pct != null
@@ -888,8 +1318,11 @@ export function computeNBACollegeBenchmarks(posGroup, nbaCombine) {
     return Math.round((below / valid.length) * 100)
   }
 
+  const draftYears = pool.map(p => p.draft_year).filter(y => y != null)
   return {
     n: pool.length,
+    draftYearMin: draftYears.length ? Math.min(...draftYears) : null,
+    draftYearMax: draftYears.length ? Math.max(...draftYears) : null,
     avgPpg:    avg('college_ppg'),
     avgEfg:    avg('college_efg_pct'),
     avgTs:     avg('college_ts_pct'),
@@ -902,50 +1335,33 @@ export function computeNBACollegeBenchmarks(posGroup, nbaCombine) {
   }
 }
 
-// ── Multiple Linear Regression (OLS via normal equations + partial-pivot Gaussian elimination) ──
-// X: n×p array of row vectors (include intercept column of 1s as first col)
-// y: n-length array of outcomes
-// Returns { beta: p-length coefficient array, r2: number }
+// Multiple linear regression — thin wrapper over the shared OLS solver
+// (`epaModels/matrixOps.js`). Replaces a third copy of Gauss–Jordan that used
+// to live in this file (the other two copies were in matrixOps itself and in
+// powerRating.js). X must include an intercept column (1s) as col 0; y is
+// the response vector. Returns { beta, r2 }.
 function _mlr(X, y) {
-  const n = X.length, p = X[0].length
-  // Build X'X (p×p) and X'y (p×1)
-  const XtX = Array.from({ length: p }, () => Array(p).fill(0))
-  const Xty = Array(p).fill(0)
-  for (let i = 0; i < n; i++) {
-    for (let j = 0; j < p; j++) {
-      Xty[j] += X[i][j] * y[i]
-      for (let k = 0; k < p; k++) XtX[j][k] += X[i][j] * X[i][k]
-    }
-  }
-  // Augmented matrix [XtX | Xty], solve via Gauss-Jordan
-  const aug = XtX.map((row, i) => [...row, Xty[i]])
-  for (let col = 0; col < p; col++) {
-    let maxRow = col
-    for (let r = col + 1; r < p; r++)
-      if (Math.abs(aug[r][col]) > Math.abs(aug[maxRow][col])) maxRow = r
-    ;[aug[col], aug[maxRow]] = [aug[maxRow], aug[col]]
-    const piv = aug[col][col]
-    if (Math.abs(piv) < 1e-10) continue
-    for (let j = col; j <= p; j++) aug[col][j] /= piv
-    for (let r = 0; r < p; r++) {
-      if (r === col) continue
-      const f = aug[r][col]
-      for (let j = col; j <= p; j++) aug[r][j] -= f * aug[col][j]
-    }
-  }
-  const beta = aug.map(row => row[p])
-  const yHat = X.map(row => row.reduce((s, x, j) => s + x * beta[j], 0))
-  const yMean = y.reduce((s, v) => s + v, 0) / n
-  const ssTot = y.reduce((s, v) => s + (v - yMean) ** 2, 0)
-  const ssRes = y.reduce((s, v, i) => s + (v - yHat[i]) ** 2, 0)
-  return { beta, r2: ssTot === 0 ? 0 : +(1 - ssRes / ssTot).toFixed(4) }
+  const beta = _olsSolve(X, y)
+  const fit  = _computeFit(X, y, beta)
+  return { beta, r2: fit.r2 }
 }
 
 // ── Team Archetype Classification ────────────────────────────────────────────
 // Classifies a team-season into a roster-composition archetype based on
 // playing-time distribution and physical profile (min 5 mpg threshold).
 // Priority: Star-Driven → Guard-Heavy → Big-Dominant → Wing-Oriented → Balanced
+//
+// Thresholds calibrated against Ivy 2022–25 — usage > 27% is roughly "top
+// usage in the league each year" (the Ivy lead-scorer median is ~25%); the
+// 50/30/40% minute-share cuts trace the modes in the league's positional
+// distribution. These are heuristics, not learned cluster centers.
 export const ARCHETYPES = ['Guard-Heavy', 'Big-Dominant', 'Wing-Oriented', 'Star-Driven', 'Balanced']
+
+const ARCHETYPE_TOP_USG       = 27   // primary scorer above this → Star-Driven
+const ARCHETYPE_GUARD_PCT     = 50   // ≥50% guard min → Guard-Heavy
+const ARCHETYPE_BIG_PCT       = 30   // ≥30% big min combined with weight cut → Big-Dominant
+const ARCHETYPE_BIG_WEIGHT    = 220  // ≥220lbs avg weighted big — distinguishes a "real" big lineup
+const ARCHETYPE_FWD_PCT       = 40   // ≥40% forward min → Wing-Oriented
 
 export function computeTeamArchetype(squad, season) {
   const eligible = squad.filter(p => p.min_pg != null && p.min_pg >= 5)
@@ -965,13 +1381,13 @@ export function computeTeamArchetype(squad, season) {
   const bigs       = eligible.filter(p => broadPositionGroup(p.pos_type) === 'Big')
   const avgBigWt   = weightedAvg(bigs, 'weight_lbs') ?? 0
 
-  if (topUsg > 27)
+  if (topUsg > ARCHETYPE_TOP_USG)
     return { archetype: 'Star-Driven',    signals: [`Top usage: ${topUsg.toFixed(0)}%`] }
-  if (guardPct > 50)
+  if (guardPct > ARCHETYPE_GUARD_PCT)
     return { archetype: 'Guard-Heavy',    signals: [`Guards: ${guardPct.toFixed(0)}% of min`] }
-  if (bigPct > 30 && avgBigWt > 220)
+  if (bigPct > ARCHETYPE_BIG_PCT && avgBigWt > ARCHETYPE_BIG_WEIGHT)
     return { archetype: 'Big-Dominant',   signals: [`Bigs: ${bigPct.toFixed(0)}% of min · avg ${avgBigWt.toFixed(0)} lbs`] }
-  if (fwdPct > 40)
+  if (fwdPct > ARCHETYPE_FWD_PCT)
     return { archetype: 'Wing-Oriented',  signals: [`Forwards: ${fwdPct.toFixed(0)}% of min`] }
   return { archetype: 'Balanced',
     signals: [`G/F/B: ${guardPct.toFixed(0)}/${fwdPct.toFixed(0)}/${bigPct.toFixed(0)}%`] }
@@ -1127,7 +1543,10 @@ export function computePositionPhysicalImpact(games, allPlayers) {
 
   const { beta, r2 } = _mlr(X, y)
 
-  const corr = (key) => pearsonCorrelation(rows.map(r => r[key]), y)
+  const corr = (key) => {
+    const v = pearsonCorrelation(rows.map(r => r[key]), y)
+    return v == null ? null : +v.toFixed(3)
+  }
 
   return {
     n: rows.length,
@@ -1142,12 +1561,12 @@ export function computePositionPhysicalImpact(games, allPlayers) {
       bigWeight:   +beta[6].toFixed(3),
     },
     pearson: {
-      guardHeight: +corr('guardHtDiff').toFixed(3),
-      fwdHeight:   +corr('fwdHtDiff').toFixed(3),
-      bigHeight:   +corr('bigHtDiff').toFixed(3),
-      guardWeight: +corr('guardWtDiff').toFixed(3),
-      fwdWeight:   +corr('fwdWtDiff').toFixed(3),
-      bigWeight:   +corr('bigWtDiff').toFixed(3),
+      guardHeight: corr('guardHtDiff'),
+      fwdHeight:   corr('fwdHtDiff'),
+      bigHeight:   corr('bigHtDiff'),
+      guardWeight: corr('guardWtDiff'),
+      fwdWeight:   corr('fwdWtDiff'),
+      bigWeight:   corr('bigWtDiff'),
     },
   }
 }
@@ -1235,12 +1654,13 @@ export function computeGameMatchupRelationship(gameMatchups, xKey, yKey) {
   const rows = gameMatchups.filter(g => g[xKey] != null && g[yKey] != null)
   const xs = rows.map(r => r[xKey])
   const ys = rows.map(r => r[yKey])
+  const r = pearsonCorrelation(xs, ys)
   return {
     points: rows.map(r => ({
       x: r[xKey], y: r[yKey],
       school: r.school, opp_school: r.opp_school, year: r.year,
     })),
-    correlation: rows.length >= 4 ? parseFloat(pearsonCorrelation(xs, ys).toFixed(3)) : 0,
+    correlation: r == null ? null : +r.toFixed(3),
     n: rows.length,
   }
 }

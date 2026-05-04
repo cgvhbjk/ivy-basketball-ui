@@ -2,19 +2,70 @@ import { useMemo, useState } from 'react'
 import teamSeasons  from '../data/teamSeasons.json'
 import baselineEP   from '../data/baseline_epa.json'
 import { runEPAPipeline } from '../utils/epaModels/pipeline.js'
+import { pythagoreanWinPctCalibrated } from '../utils/calibration.js'
+import { getPythagoreanModel } from '../utils/calibrationCache.js'
+import games from '../data/games.json'
+import { pearsonCorrelation, pearsonBootstrapCI, pearsonPermutationP } from '../utils/insightEngine.js'
+import { localCache } from '../utils/cache.js'
 import useEpaStore from '../store/useEpaStore.js'
 import PageHeader from '../components/shared/PageHeader.jsx'
 import PageConclusions from '../components/shared/PageConclusions.jsx'
 import MethodologyPanel from '../components/shared/MethodologyPanel.jsx'
 import { T, CARD, SEL, BTN } from '../styles/theme.js'
 
-// ── Luck computation ──────────────────────────────────────────────────────────
+// Pythagorean exponent, on adjusted ratings (schedule strength stripped out).
+// Reads from build-time precomputedStats.json when the data hash matches —
+// otherwise falls back to live fit. See utils/calibration.js comments.
+const PY_MODEL = getPythagoreanModel(teamSeasons, games, { mode: 'adjusted' })
 
-function pythagoreanWinPct(ppp, opp_ppp, exp = 10) {
-  const p = Math.pow(ppp, exp)
-  const o = Math.pow(opp_ppp, exp)
-  return p / (p + o)
+// ── Empirical regression-to-mean check ──────────────────────────────────────
+// Pair every (school, year) row with its (school, year+1) successor and ask:
+// does luck this year predict luck next year? If r ≈ 0, the page's "luck
+// regresses" claim is supported on this dataset; if r is meaningfully
+// positive, the claim is wrong and we should say so.
+function computeLuckPersistence(teamSeasons) {
+  const idx = new Map(teamSeasons.map(s => [`${s.school}|${s.year}`, s]))
+  const pairs = []
+  for (const s of teamSeasons) {
+    const next = idx.get(`${s.school}|${s.year + 1}`)
+    if (!next) continue
+    if (s.win_pct == null || next.win_pct == null) continue
+    if (s.adjoe == null || s.adjde == null || next.adjoe == null || next.adjde == null) continue
+    const pyA = pythagoreanWinPctCalibrated(s,    PY_MODEL)
+    const pyB = pythagoreanWinPctCalibrated(next, PY_MODEL)
+    if (pyA == null || pyB == null) continue
+    pairs.push({
+      school: s.school,
+      yearT:  s.year,
+      luckT:  +(s.win_pct    - pyA).toFixed(3),
+      luckT1: +(next.win_pct - pyB).toFixed(3),
+    })
+  }
+  if (pairs.length < 4) return { r: null, n: pairs.length, pairs }
+  const xs = pairs.map(p => p.luckT)
+  const ys = pairs.map(p => p.luckT1)
+  const r  = pearsonCorrelation(xs, ys)
+  const ci = pearsonBootstrapCI(xs, ys)
+  const p  = pearsonPermutationP(xs, ys)
+  return {
+    r:      r  == null ? null : +r.toFixed(2),
+    ciLow:  ci?.ciLow  != null ? +ci.ciLow.toFixed(2)  : null,
+    ciHigh: ci?.ciHigh != null ? +ci.ciHigh.toFixed(2) : null,
+    pValue: p  != null ? +p.toFixed(2) : null,
+    n: pairs.length,
+    pairs,
+  }
 }
+
+// Heaviest cold-load cost on this page (B=5000 bootstrap + B=5000 permutation).
+// localCache makes it a one-time-per-browser hit instead of every reload.
+const LUCK_PERSISTENCE = localCache(
+  'computeLuckPersistence',
+  `pyAlpha=${PY_MODEL.exponent}|mode=${PY_MODEL.mode}`,
+  () => computeLuckPersistence(teamSeasons),
+)
+
+// ── Luck computation ──────────────────────────────────────────────────────────
 
 function buildLuckRows(teamSeasons, observations) {
   // Map pipeline observations: "Harvard 2022" → residual (actual - predicted net ppp)
@@ -24,9 +75,10 @@ function buildLuckRows(teamSeasons, observations) {
   }
 
   return teamSeasons.map(ts => {
-    const pyWin     = pythagoreanWinPct(ts.ppp, ts.opp_ppp)
-    const luckDelta = +(ts.win_pct - pyWin).toFixed(3)
-    const luckGames = +(luckDelta * ts.games).toFixed(1)
+    const pyWinRaw  = pythagoreanWinPctCalibrated(ts, PY_MODEL)
+    const pyWin     = pyWinRaw == null ? null : +pyWinRaw.toFixed(3)
+    const luckDelta = pyWin == null ? null : +(ts.win_pct - pyWin).toFixed(3)
+    const luckGames = luckDelta == null ? null : +(luckDelta * ts.games).toFixed(1)
 
     const schoolCap = ts.school.charAt(0).toUpperCase() + ts.school.slice(1)
     const label     = `${schoolCap} ${ts.year}`
@@ -41,7 +93,7 @@ function buildLuckRows(teamSeasons, observations) {
       confRecord:   ts.conf_record,
       games:        ts.games,
       winPct:       ts.win_pct,
-      pyWin:        +pyWin.toFixed(3),
+      pyWin,
       luckDelta,
       luckGames,    // + = lucky (winning more games than efficiency predicts)
       netPPP:       ts.net_ppp,
@@ -107,13 +159,17 @@ export default function LuckLab() {
   const [sortKey, setSortKey]       = useState('luckGames')
 
   const pipeline = useMemo(() => {
-    if (tier1Result) return tier1Result
+    if (tier1Result.adjusted) return tier1Result.adjusted
     try {
-      const result = runEPAPipeline(teamSeasons, { targetMode: 'raw', baselineEP })
-      setTier1Result(result)
+      // adjusted target on raw four-factor predictors: residual = (adjoe-adjde)
+      // minus four-factor prediction. Coefficients are biased (predictors don't
+      // see opponent strength) but residuals are exactly what we want for luck —
+      // execution variance with schedule strength already netted out.
+      const result = runEPAPipeline(teamSeasons, { targetMode: 'adjusted', baselineEP })
+      setTier1Result(result, 'adjusted')
       return result
     } catch (e) { return { status: 'error', messages: [e.message], observations: [] } }
-  }, [tier1Result])
+  }, [tier1Result.adjusted])
 
   const rows = useMemo(() =>
     buildLuckRows(teamSeasons, pipeline?.observations ?? []),
@@ -134,7 +190,7 @@ export default function LuckLab() {
   }, [rows, yearFilter, sortKey])
 
   const maxLuckGames = useMemo(() =>
-    Math.max(...rows.map(r => Math.abs(r.luckGames)), 1),
+    Math.max(...rows.map(r => Math.abs(r.luckGames ?? 0)), 1),
     [rows]
   )
   const maxResidual = useMemo(() =>
@@ -142,18 +198,19 @@ export default function LuckLab() {
     [rows]
   )
 
-  // Summary stats for header
-  const mostLucky   = [...rows].sort((a, b) => b.luckGames - a.luckGames)[0]
-  const mostUnlucky = [...rows].sort((a, b) => a.luckGames - b.luckGames)[0]
+  // Summary stats for header — null luckGames pushed to the end of the sort
+  const luckCmp = (a, b) => (b.luckGames ?? -Infinity) - (a.luckGames ?? -Infinity)
+  const mostLucky   = [...rows].sort(luckCmp)[0]
+  const mostUnlucky = [...rows].sort((a, b) => -luckCmp(a, b))[0]
   const curYear     = Math.max(...years)
   const curRows     = rows.filter(r => r.year === curYear)
-  const luckiestCur = [...curRows].sort((a, b) => b.luckGames - a.luckGames)[0]
+  const luckiestCur = [...curRows].sort(luckCmp)[0]
 
   return (
     <div style={{ background: T.bg, minHeight: '100vh' }}>
       <PageHeader
         title="Luck Lab"
-        subtitle="Pythagorean luck: actual wins minus expected wins from points-per-possession efficiency. Efficiency luck: actual net PPP minus what the four-factor model (eFG%, TOV%, ORB%, FTR) predicts."
+        subtitle={`Pythagorean luck: actual wins minus expected wins from opponent-adjusted offensive/defensive efficiency (α=${PY_MODEL.exponent}, fitted on ${PY_MODEL.n} team-seasons). Efficiency luck: actual net PPP minus what the four-factor model (eFG%, TOV%, ORB%, FTR) predicts.`}
         stats={[
           { label: 'Luckiest (all-time)',   value: mostLucky   ? `${mostLucky.schoolCap} '${String(mostLucky.year).slice(2)}` : '—',  color: T.amber, note: mostLucky ? `+${mostLucky.luckGames}g` : '' },
           { label: 'Unluckiest (all-time)', value: mostUnlucky ? `${mostUnlucky.schoolCap} '${String(mostUnlucky.year).slice(2)}` : '—', color: T.blue,  note: mostUnlucky ? `${mostUnlucky.luckGames}g` : '' },
@@ -182,15 +239,19 @@ export default function LuckLab() {
               <span style={{ color: T.amber, fontWeight: 600 }}>Record luck (games above expectation)</span> — positive means a team won more games than their points-per-possession efficiency predicts. Close-game variance. Tends to <em>not</em> persist season to season.
             </div>
             <div style={{ fontSize: 12, color: T.textMd, lineHeight: 1.7, maxWidth: 480, marginTop: 6 }}>
-              <span style={{ color: T.blue, fontWeight: 600 }}>Efficiency luck (residual)</span> — positive means a team scored more net points per possession than their four-factor profile (shot quality, turnovers, rebounds, free throws) predicts. Suggests unsustainable execution or opponent defense quality mismatch.
+              <span style={{ color: T.blue, fontWeight: 600 }}>Efficiency luck (residual)</span> — positive means a team's opponent-adjusted net efficiency (AdjOE − AdjDE) outran what their four-factor profile (shot quality, turnovers, rebounds, free throws) predicts. Schedule strength is already netted out, so this is closer to true execution variance than a raw-PPP residual.
             </div>
           </div>
           <div style={{ borderLeft: `1px solid ${T.border}`, paddingLeft: 32 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: T.accentSoft, marginBottom: 6 }}>PYTHAGOREAN FORMULA</div>
             <div style={{ fontSize: 11, color: T.textLow, fontFamily: 'monospace', lineHeight: 2 }}>
-              Expected win% = PPP¹⁰ / (PPP¹⁰ + OppPPP¹⁰)<br/>
+              Expected win% = AdjOE^α / (AdjOE^α + AdjDE^α), α = {PY_MODEL.exponent}<br/>
               Record luck (games) = (Actual% − Expected%) × Games<br/>
-              Efficiency luck = Actual net PPP − Model predicted PPP
+              Efficiency luck = (AdjOE − AdjDE) − Four-factor predicted
+            </div>
+            <div style={{ fontSize: 10, color: T.textMin, marginTop: 6, lineHeight: 1.5 }}>
+              α fitted by least-squares against actual win% across {PY_MODEL.n} team-seasons.
+              Adjusted ratings strip out schedule strength so the residual reflects close-game variance, not OOC opponent quality.
             </div>
           </div>
         </div>
@@ -282,7 +343,28 @@ export default function LuckLab() {
         </div>
 
         <PageConclusions prominent conclusions={[
-          { label: 'Record luck regresses', color: T.amber, text: 'Teams with high positive record luck (winning significantly more games than their PPP efficiency predicts) typically see their win% converge toward their Pythagorean expectation the following season. A team at +3 games lucky is a regression candidate — not necessarily due for a bad season, but due for a more honest one.' },
+          {
+            label: 'Record luck — empirical persistence',
+            color: T.amber,
+            text: (() => {
+              const lp = LUCK_PERSISTENCE
+              if (lp.r == null) {
+                return `Not enough consecutive-season pairs (n=${lp.n}) to verify whether luck persists year-to-year.`
+              }
+              const ciStr = (lp.ciLow != null && lp.ciHigh != null) ? ` (95% CI [${lp.ciLow}, ${lp.ciHigh}])` : ''
+              const pStr  = lp.pValue != null ? `, permutation p=${lp.pValue}` : ''
+              const ciStraddlesZero = lp.ciLow != null && lp.ciHigh != null && lp.ciLow <= 0 && lp.ciHigh >= 0
+              const significant = lp.pValue != null && lp.pValue < 0.05
+              const headline = `On this dataset (n=${lp.n} consecutive-season pairs, 2022–25), the year-to-year correlation of record luck is r=${lp.r}${ciStr}${pStr}.`
+              if (ciStraddlesZero || !significant) {
+                return `${headline} The CI straddles zero, so we can't distinguish persistence from noise on n=${lp.n}. The conventional "luck regresses to the mean" intuition is consistent with the data but not strongly verified — treat year-over-year predictions cautiously.`
+              }
+              if (lp.r > 0) {
+                return `${headline} Record luck shows positive year-over-year persistence beyond chance — a team that overperformed its PPP last year tends to do so again. That contradicts the textbook "luck regresses" claim and likely reflects a stable coaching/clutch-execution trait rather than pure variance.`
+              }
+              return `${headline} Record luck reverses sign year-over-year more than chance — strong empirical regression-to-mean.`
+            })(),
+          },
           { label: 'Efficiency luck is different', color: T.blue, text: 'A positive efficiency residual means a team\'s actual net PPP exceeded what their four-factor profile (eFG%, TOV%, ORB%, FTR) predicts. This can reflect opponent quality mismatch, free-throw over-performance, or genuine execution above the model\'s four-factor signal.' },
           { label: 'Both can co-exist', color: T.accentSoft, text: 'A team can be efficiency-unlucky (poor four-factor residual) but record-lucky (won close games anyway), or vice versa. The two metrics measure different layers of randomness: one at the possession level, one at the game-outcome level.' },
         ]} />

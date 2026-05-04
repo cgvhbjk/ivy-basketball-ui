@@ -1,6 +1,15 @@
 // Head coach and playstyle metadata per school and year.
 // Sources: public school athletic department records. Verify for latest season.
 
+// Provenance — surfaced in the UI so consumers know this is a hand-curated
+// approximation, not Barttorvik / official-source data.
+export const COACH_META_INFO = {
+  approximate: true,
+  source: 'Hand-curated from public athletic-department pages',
+  lastVerified: '2025-09',
+  caveat: 'Playstyle descriptions are subjective summaries. Coach name/year mappings should be verified before publication or scouting use.',
+}
+
 export const COACH_META = {
   harvard: {
     2022: { name: 'Tommy Amaker', style: 'Deliberate pace, defense-first, high-IQ half-court offense' },
@@ -53,5 +62,8 @@ export const COACH_META = {
 }
 
 export function getCoach(school, year) {
-  return COACH_META[school]?.[year] ?? { name: 'Unknown', style: 'No data available' }
+  const hit = COACH_META[school]?.[year]
+  if (!hit) return { name: 'Unknown', style: 'No data available', approximate: false, missing: true }
+  // Flag the result as approximate so the UI can render an annotation.
+  return { ...hit, approximate: COACH_META_INFO.approximate, missing: false }
 }
