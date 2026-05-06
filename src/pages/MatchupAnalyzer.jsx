@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer, Tooltip } from 'recharts'
 import teamSeasons from '../data/teamSeasons.json'
 import players from '../data/players.json'
 import games from '../data/games.json'
 import { SCHOOLS, SCHOOL_META, SCHOOL_COLORS, YEARS, TEAM_METRIC_MAP } from '../data/constants.js'
 import useStore from '../store/useStore.js'
+import usePlayerStore from '../store/usePlayerStore.js'
 import TeamBadge from '../components/shared/TeamBadge.jsx'
 import StatCard from '../components/shared/StatCard.jsx'
 import PageHeader from '../components/shared/PageHeader.jsx'
@@ -113,7 +115,7 @@ function DiffBadge({ value, unit = '', invert = false }) {
   )
 }
 
-function NotablePlayerCard({ player, teamColor }) {
+function NotablePlayerCard({ player, teamColor, onPlayerClick }) {
   if (!player) return null
   const heightIn = parseHeightIn(player.height)
   const role = generatePlayerRoleSummary(player)
@@ -121,7 +123,17 @@ function NotablePlayerCard({ player, teamColor }) {
     <div style={{ background: '#1a1a1a', borderRadius: 8, padding: '12px 14px', border: `1px solid ${teamColor}22` }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: teamColor }}>{player.name}</div>
+          <button
+            onClick={() => onPlayerClick?.(player)}
+            title="Open in Player Lab"
+            style={{
+              background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left',
+              fontSize: 13, fontWeight: 600, color: teamColor, fontFamily: 'inherit',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.textDecoration = 'underline' }}
+            onMouseLeave={e => { e.currentTarget.style.textDecoration = 'none' }}>
+            {player.name}
+          </button>
           <div style={{ fontSize: 11, color: '#6b7280' }}>{player.pos_type} · {player.class_yr} · {heightIn ? inchesToFtIn(heightIn) : player.height}</div>
         </div>
         <div style={{ textAlign: 'right' }}>
@@ -195,6 +207,18 @@ export default function MatchupAnalyzer() {
   } = useStore()
 
   const [activeSection, setActiveSection] = useState('overview')
+  // Position-aggregate weighting mode — 'minutes' weights by playing time
+  // (default; matches what coaches actually see on the floor), 'roster' counts
+  // each player equally (closer to a recruiting view).
+  const [posWeightBy, setPosWeightBy] = useState('minutes')
+
+  const navigate = useNavigate()
+  const setPlayerFromMatchup = usePlayerStore(s => s.setPlayerFromMatchup)
+  const openPlayer = (p) => {
+    if (!p?.name || !p?.school || !p?.year) return
+    setPlayerFromMatchup({ school: p.school, year: p.year, name: p.name })
+    navigate('/players', { state: { from: 'matchup' } })
+  }
 
   const colorA = SCHOOL_COLORS[analyzerTeamA]
   const colorB = SCHOOL_COLORS[analyzerTeamB]
@@ -228,11 +252,11 @@ export default function MatchupAnalyzer() {
   const schemeDefB = useMemo(() => seasonB ? classifyDefScheme(seasonB) : '—', [seasonB])
 
   const posCompare = useMemo(() =>
-    comparePositionProfiles(squadA, squadB)
-  , [squadA, squadB])
+    comparePositionProfiles(squadA, squadB, { weightBy: posWeightBy })
+  , [squadA, squadB, posWeightBy])
 
-  const posAggA = useMemo(() => buildPositionWeightedAggregates(squadA), [squadA])
-  const posAggB = useMemo(() => buildPositionWeightedAggregates(squadB), [squadB])
+  const posAggA = useMemo(() => buildPositionWeightedAggregates(squadA, { weightBy: posWeightBy }), [squadA, posWeightBy])
+  const posAggB = useMemo(() => buildPositionWeightedAggregates(squadB, { weightBy: posWeightBy }), [squadB, posWeightBy])
 
   const rosterSchemeA = useMemo(() => classifySchemeFromRoster(seasonA, squadA), [seasonA, squadA])
   const rosterSchemeB = useMemo(() => classifySchemeFromRoster(seasonB, squadB), [seasonB, squadB])
@@ -655,8 +679,33 @@ export default function MatchupAnalyzer() {
       {/* ── Position Breakdown ── */}
       {activeSection === 'positions' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-          <div style={{ fontSize: 12, color: '#6b7280' }}>
-            Playing-time weighted per-position cards (min 5 mpg) · height, weight, experience, efficiency
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 12, color: '#6b7280' }}>
+              Per-position cards (min 5 mpg) · height, weight, experience, efficiency
+              {posWeightBy === 'minutes'
+                ? ' — weighted by minutes played'
+                : ' — each rostered player counts equally'}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+              <span style={{ color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Average</span>
+              {[
+                ['minutes', 'By minutes'],
+                ['roster',  'Roster avg'],
+              ].map(([v, lbl]) => (
+                <button
+                  key={v}
+                  onClick={() => setPosWeightBy(v)}
+                  style={{
+                    padding: '4px 10px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                    border: `1px solid ${posWeightBy === v ? '#a5b4fc' : '#2c2c2c'}`,
+                    background: posWeightBy === v ? '#a5b4fc22' : 'transparent',
+                    color: posWeightBy === v ? '#a5b4fc' : '#6b7280',
+                    cursor: 'pointer',
+                  }}>
+                  {lbl}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Side-by-side position cards */}
@@ -769,7 +818,7 @@ export default function MatchupAnalyzer() {
               <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>Notable Players</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
                 {notable.map(p => (
-                  <NotablePlayerCard key={p.name} player={p} teamColor={color} />
+                  <NotablePlayerCard key={p.name} player={p} teamColor={color} onPlayerClick={openPlayer} />
                 ))}
               </div>
 
@@ -784,7 +833,17 @@ export default function MatchupAnalyzer() {
                 {squad.filter(p => p.min_pg >= 6).slice(0, 10).map(p => (
                   <div key={p.name} style={{ display: 'grid', gridTemplateColumns: '1fr 44px 44px 44px 44px 52px', borderBottom: '1px solid #0e0e0e' }}>
                     <div style={{ padding: '7px 10px', fontSize: 12, color }}>
-                      <div style={{ fontWeight: 500 }}>{p.name}</div>
+                      <button
+                        onClick={() => openPlayer(p)}
+                        title="Open in Player Lab"
+                        style={{
+                          background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                          textAlign: 'left', color, fontFamily: 'inherit', fontSize: 12, fontWeight: 500,
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.textDecoration = 'underline' }}
+                        onMouseLeave={e => { e.currentTarget.style.textDecoration = 'none' }}>
+                        {p.name}
+                      </button>
                       <div style={{ fontSize: 10, color: '#4b5563' }}>{p.pos_type} · {p.class_yr}</div>
                     </div>
                     {[p.min_pg?.toFixed(0), p.pts?.toFixed(1), p.treb?.toFixed(1), p.ast?.toFixed(1)].map((v, i) => (
@@ -805,7 +864,8 @@ export default function MatchupAnalyzer() {
       {activeSection === 'insights' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 4 }}>
-            Actionable preparation insights based on statistical matchup analysis
+            Actionable preparation insights based on statistical matchup analysis.
+            Drill suggestions are starting points — substitute equivalents from your own playbook.
           </div>
           {matchupInsights.length === 0 && (
             <div style={{ color: '#4b5563', fontSize: 13 }}>Select two teams to generate insights.</div>
@@ -817,6 +877,24 @@ export default function MatchupAnalyzer() {
                 <span style={{ fontSize: 13, fontWeight: 600, color: '#a5b4fc' }}>{ins.category}</span>
               </div>
               <div style={{ fontSize: 13, color: '#9ca3af', lineHeight: 1.7 }}>{ins.text}</div>
+              {ins.recommendedDrills?.length > 0 && (
+                <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #2c2c2c' }}>
+                  <div style={{ fontSize: 10, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
+                    Suggested drills
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {ins.recommendedDrills.map((d, j) => (
+                      <div key={j} style={{ background: '#0c0c0c', borderRadius: 6, padding: '8px 10px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: '#ebebeb' }}>{d.name}</span>
+                          <span style={{ fontSize: 10, color: '#6b7280', fontStyle: 'italic' }}>{d.focus}</span>
+                        </div>
+                        <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 3, lineHeight: 1.5 }}>{d.protocol}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ))}
 

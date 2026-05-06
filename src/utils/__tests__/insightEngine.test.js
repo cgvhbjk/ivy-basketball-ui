@@ -19,6 +19,7 @@ import {
   benjaminiHochberg,
   clusterTeamSchemes,
   validateClustersAgainstCoachMeta,
+  generatePlayerRoleSummary,
 } from '../insightEngine.js'
 
 describe('pearsonCorrelation', () => {
@@ -312,5 +313,74 @@ describe('helpers', () => {
       { v: 40, w: 4 },
     ]
     expect(weightedAvg(items, 'v', 'w')).toBeCloseTo((10 * 2 + 40 * 4) / (2 + 4), 6)
+  })
+})
+
+describe('generatePlayerRoleSummary', () => {
+  // The previous version assigned every rotation player a "scorer and offensive
+  // rebounder guard"-style label because `or_pct` in players.json is a national
+  // rank (typical values 30–250), not a per-possession rate, so the threshold
+  // `or_pct >= 10` triggered for nearly everyone. These tests pin the new
+  // behavior: thresholds use real per-game stats, no scoring fallback, and
+  // labels are diverse across a typical rotation.
+
+  const mockSquad = [
+    // High-usage primary scorer + playmaker
+    { name: 'A', pos_type: 'PG',     class_yr: 'Sr', usg: 28, ast: 5.5, treb: 3.2, oreb: 0.4, blk: 0.2, stl: 1.4, efg: 50 },
+    // Rim protector + rebounder big
+    { name: 'B', pos_type: 'PF/C',   class_yr: 'Jr', usg: 18, ast: 1.0, treb: 8.5, oreb: 2.8, blk: 1.8, stl: 0.6, efg: 54 },
+    // Spot-up shooter (low usg, high efg)
+    { name: 'C', pos_type: 'Wing G', class_yr: 'So', usg: 14, ast: 1.2, treb: 3.0, oreb: 0.5, blk: 0.1, stl: 0.7, efg: 60 },
+    // Featured scorer (no other tag)
+    { name: 'D', pos_type: 'Wing F', class_yr: 'Jr', usg: 23, ast: 2.0, treb: 4.5, oreb: 1.0, blk: 0.4, stl: 0.9, efg: 51 },
+    // Ball hawk only
+    { name: 'E', pos_type: 'PG',     class_yr: 'Sr', usg: 17, ast: 3.0, treb: 3.0, oreb: 0.5, blk: 0.2, stl: 2.0, efg: 48 },
+    // Generic role player (no tags hit) — should fall back to class+position
+    { name: 'F', pos_type: 'Wing F', class_yr: 'Fr', usg: 12, ast: 1.0, treb: 3.0, oreb: 0.6, blk: 0.3, stl: 0.5, efg: 49 },
+    // Offensive rebounder
+    { name: 'G', pos_type: 'PF/C',   class_yr: 'So', usg: 15, ast: 0.8, treb: 6.0, oreb: 2.7, blk: 0.8, stl: 0.4, efg: 53 },
+  ]
+
+  it('does not append the broad position word to a tagged player', () => {
+    const label = generatePlayerRoleSummary(mockSquad[0])
+    expect(label).not.toMatch(/guard$/i)
+    expect(label).not.toMatch(/forward$/i)
+    expect(label).not.toMatch(/big$/i)
+  })
+
+  it('does not assign a scoring tag to low-usage players (no "complementary player" fallback)', () => {
+    const generic = generatePlayerRoleSummary(mockSquad[5]) // F: usg=12
+    expect(generic.toLowerCase()).not.toContain('scorer')
+    expect(generic.toLowerCase()).not.toContain('complementary')
+  })
+
+  it('falls back to "{Class} {position}" when no role threshold is met', () => {
+    const label = generatePlayerRoleSummary(mockSquad[5])
+    expect(label).toBe('Freshman forward')
+  })
+
+  it('produces diverse labels across a representative rotation (≥4 distinct)', () => {
+    const labels = mockSquad.map(generatePlayerRoleSummary)
+    const distinct = new Set(labels)
+    expect(distinct.size).toBeGreaterThanOrEqual(4)
+  })
+
+  it('does not tag the same player as both "primary" and "featured" scorer', () => {
+    const a = generatePlayerRoleSummary(mockSquad[0]) // primary
+    const d = generatePlayerRoleSummary(mockSquad[3]) // featured
+    expect(a).toContain('primary scorer')
+    expect(a).not.toContain('featured scorer')
+    expect(d).toContain('featured scorer')
+    expect(d).not.toContain('primary scorer')
+  })
+
+  it('caps at two role tags joined by " / "', () => {
+    // B hits rim protector + rebounder + offensive rebounder — should cap at 2
+    const label = generatePlayerRoleSummary(mockSquad[1])
+    expect(label.split(' / ').length).toBeLessThanOrEqual(2)
+  })
+
+  it('handles null player gracefully', () => {
+    expect(generatePlayerRoleSummary(null)).toBe('Unknown')
   })
 })

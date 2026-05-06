@@ -1,6 +1,7 @@
 // Pure statistical utilities — no React imports
 import { olsSolve as _olsSolve, computeFit as _computeFit } from './epaModels/matrixOps.js'
 import { zscore, pickKBySilhouette } from './clustering.js'
+import { DRILL_CATALOG } from '../data/drillCatalog.js'
 
 // Default minimum sample size to compute a correlation. With fewer than 4
 // pairs Pearson r is unstable and dominated by chance, so we return null and
@@ -687,15 +688,31 @@ export function broadPositionGroup(posType) {
   return null
 }
 
-// Build playing-time-weighted aggregates per position group for a squad
-// Returns { Guard: {...}, Forward: {...}, Big: {...} } or subsets present
-export function buildPositionWeightedAggregates(squadPlayers, { minMin = 5 } = {}) {
+// Simple (unweighted) average — counts each player once.
+function simpleAvg(items, key) {
+  const valid = items.filter(p => p[key] != null)
+  if (!valid.length) return null
+  return valid.reduce((s, p) => s + p[key], 0) / valid.length
+}
+
+// Build per-position aggregates for a squad. `weightBy` controls how players
+// are aggregated within a position group:
+//   - 'minutes' (default): each player's contribution is weighted by min_pg,
+//     so a 30-min starter counts six times more than a 5-min reserve. This is
+//     the more honest view of "who actually plays."
+//   - 'roster': each player counts equally. Useful for "if everyone got equal
+//     minutes, what would the average look like?" — closer to a recruiting
+//     view than a game-plan view.
+// Returns { Guard: {...}, Forward: {...}, Big: {...} } or subsets present.
+export function buildPositionWeightedAggregates(squadPlayers, { minMin = 5, weightBy = 'minutes' } = {}) {
   const eligible = squadPlayers.filter(p => p.min_pg != null && p.min_pg >= minMin)
   const groups = { Guard: [], Forward: [], Big: [] }
   for (const p of eligible) {
     const g = broadPositionGroup(p.pos_type)
     if (g && groups[g]) groups[g].push(p)
   }
+
+  const avgFn = weightBy === 'roster' ? simpleAvg : weightedAvg
 
   const result = {}
   for (const [group, ps] of Object.entries(groups)) {
@@ -708,15 +725,15 @@ export function buildPositionWeightedAggregates(squadPlayers, { minMin = 5 } = {
     result[group] = {
       n:              ps.length,
       totalMinPg:     +ps.reduce((s, p) => s + (p.min_pg ?? 0), 0).toFixed(1),
-      avgHeightIn:    weightedAvg(enriched, '_height_in') != null ? +weightedAvg(enriched, '_height_in').toFixed(1) : null,
-      avgWeightLbs:   weightedAvg(ps, 'weight_lbs')       != null ? +weightedAvg(ps, 'weight_lbs').toFixed(1)       : null,
-      avgExperience:  weightedAvg(enriched, '_exp')       != null ? +weightedAvg(enriched, '_exp').toFixed(2)       : null,
-      avgPts:         weightedAvg(ps, 'pts')   != null ? +weightedAvg(ps, 'pts').toFixed(1)   : null,
-      avgOrtg:        weightedAvg(ps, 'ortg')  != null ? +weightedAvg(ps, 'ortg').toFixed(1)  : null,
-      avgDrtg:        weightedAvg(ps, 'drtg')  != null ? +weightedAvg(ps, 'drtg').toFixed(1)  : null,
-      avgEfg:         weightedAvg(ps, 'efg')   != null ? +weightedAvg(ps, 'efg').toFixed(1)   : null,
-      avgBpm:         weightedAvg(ps, 'bpm')   != null ? +weightedAvg(ps, 'bpm').toFixed(2)   : null,
-      avgUsg:         weightedAvg(ps, 'usg')   != null ? +weightedAvg(ps, 'usg').toFixed(1)   : null,
+      avgHeightIn:    avgFn(enriched, '_height_in') != null ? +avgFn(enriched, '_height_in').toFixed(1) : null,
+      avgWeightLbs:   avgFn(ps, 'weight_lbs')       != null ? +avgFn(ps, 'weight_lbs').toFixed(1)       : null,
+      avgExperience:  avgFn(enriched, '_exp')       != null ? +avgFn(enriched, '_exp').toFixed(2)       : null,
+      avgPts:         avgFn(ps, 'pts')   != null ? +avgFn(ps, 'pts').toFixed(1)   : null,
+      avgOrtg:        avgFn(ps, 'ortg')  != null ? +avgFn(ps, 'ortg').toFixed(1)  : null,
+      avgDrtg:        avgFn(ps, 'drtg')  != null ? +avgFn(ps, 'drtg').toFixed(1)  : null,
+      avgEfg:         avgFn(ps, 'efg')   != null ? +avgFn(ps, 'efg').toFixed(1)   : null,
+      avgBpm:         avgFn(ps, 'bpm')   != null ? +avgFn(ps, 'bpm').toFixed(2)   : null,
+      avgUsg:         avgFn(ps, 'usg')   != null ? +avgFn(ps, 'usg').toFixed(1)   : null,
       missingHeight:  enriched.filter(p => p._height_in == null).length,
       players:        ps,
     }
@@ -724,10 +741,11 @@ export function buildPositionWeightedAggregates(squadPlayers, { minMin = 5 } = {
   return result
 }
 
-// Compare two squads at the position level — returns array of position diffs
-export function comparePositionProfiles(squadA, squadB, { minMin = 5 } = {}) {
-  const aggA = buildPositionWeightedAggregates(squadA, { minMin })
-  const aggB = buildPositionWeightedAggregates(squadB, { minMin })
+// Compare two squads at the position level — returns array of position diffs.
+// `weightBy` is forwarded to buildPositionWeightedAggregates (see notes there).
+export function comparePositionProfiles(squadA, squadB, { minMin = 5, weightBy = 'minutes' } = {}) {
+  const aggA = buildPositionWeightedAggregates(squadA, { minMin, weightBy })
+  const aggB = buildPositionWeightedAggregates(squadB, { minMin, weightBy })
   return ['Guard', 'Forward', 'Big'].map(pos => ({
     position:       pos,
     teamA:          aggA[pos] ?? null,
@@ -862,24 +880,56 @@ export function dataQualityCheck(players, school, year) {
   return { totalPlayers: squad.length, qualifiedPlayers: qualified.length, warnings, hasWarnings: warnings.length > 0 }
 }
 
-// Generate a short player role summary based on stats
+// Maps Barttorvik class abbreviation to a readable label.
+const CLASS_LABEL = { Fr: 'Freshman', So: 'Sophomore', Jr: 'Junior', Sr: 'Senior', Grad: 'Grad', GR: 'Grad' }
+
+// Generate a short player role summary based on per-game stats. Uses absolute
+// thresholds calibrated for Ivy rotation players. Returns at most 2 role tags
+// joined by '/'; falls back to "{Class} {position}" when no tag triggers.
+//
+// Threshold notes: previous version used `or_pct` and `ast_pct`, but those
+// fields in players.json are Barttorvik national ranks (or_pct ≈ 33, 147),
+// not per-possession percentages, so the old `or_pct >= 10` check fired for
+// nearly every player. The per-game fields (oreb, ast, treb, blk, stl) are
+// the only ones reliably on a real per-game scale.
 export function generatePlayerRoleSummary(player) {
   if (!player) return 'Unknown'
-  const roles = []
-  if (player.usg >= 24)            roles.push('primary scorer')
-  else if (player.usg >= 18)       roles.push('featured scorer')
-  else                              roles.push('complementary player')
-  if (player.ast_pct >= 22)        roles.push('facilitator')
-  if (player.or_pct >= 10)         roles.push('offensive rebounder')
-  if (player.treb >= 7)            roles.push('dominant rebounder')
-  if (player.blk >= 1.2)           roles.push('shot-blocker')
-  if (player.stl >= 1.5)           roles.push('disruptor')
-  if (player.efg >= 55 && player.usg < 18) roles.push('efficient spot-up')
-  const pos = broadPositionGroup(player.pos_type) ?? 'player'
-  return roles.slice(0, 2).join(', ') + ' ' + pos.toLowerCase()
+  const tags = []
+
+  // Scoring volume — primary > featured. No "complementary" fallback so that
+  // off-ball role players don't all get tagged as scorers.
+  if (player.usg != null && player.usg >= 26)        tags.push('primary scorer')
+  else if (player.usg != null && player.usg >= 22)   tags.push('featured scorer')
+
+  // Playmaking — per-game assists. 4.5+ is real lead-guard territory in Ivy.
+  if (player.ast != null && player.ast >= 4.5)       tags.push('playmaker')
+
+  // Defense — rim protection vs. perimeter steals.
+  if (player.blk != null && player.blk >= 1.3)       tags.push('rim protector')
+  else if (player.stl != null && player.stl >= 1.7)  tags.push('ball hawk')
+
+  // Rebounding — separate offensive vs. total. 2.5 oreb/g is strong; 8 treb/g
+  // is a featured rebounder. Use OR if it's a notable strength on its own.
+  if (player.oreb != null && player.oreb >= 2.5)     tags.push('offensive rebounder')
+  else if (player.treb != null && player.treb >= 8)  tags.push('rebounder')
+
+  // Efficient low-usage shooter — high eFG with low usage signals spot-up role.
+  if (player.efg != null && player.efg >= 56 &&
+      player.usg != null && player.usg < 18)         tags.push('spot-up shooter')
+
+  if (tags.length === 0) {
+    const pos = broadPositionGroup(player.pos_type)?.toLowerCase() ?? 'player'
+    const yr  = CLASS_LABEL[player.class_yr]
+    return yr ? `${yr} ${pos}` : pos
+  }
+
+  return tags.slice(0, 2).join(' / ')
 }
 
-// Generate actionable practice insights based on matchup data
+// Generate actionable practice insights based on matchup data. Each insight is
+// stamped with up to 2 drill recommendations from the matching category in
+// DRILL_CATALOG so coaches can move directly from "what to address" to "what
+// to run on Tuesday."
 export function generateMatchupInsights(seasonA, seasonB, posCompare, schemeA, schemeB, nameA = 'Team A', nameB = 'Team B') {
   const insights = []
   if (!seasonA || !seasonB) return insights
@@ -975,7 +1025,10 @@ export function generateMatchupInsights(seasonA, seasonB, posCompare, schemeA, s
     })
   }
 
-  return insights.slice(0, 5)
+  return insights.slice(0, 5).map(ins => ({
+    ...ins,
+    recommendedDrills: (DRILL_CATALOG[ins.category] ?? []).slice(0, 2),
+  }))
 }
 
 // Numeric combine target ranges keyed to match NBA_COMBINE_TARGETS in PlayerLab.

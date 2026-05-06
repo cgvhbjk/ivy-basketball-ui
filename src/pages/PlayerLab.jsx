@@ -1,4 +1,5 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer, Tooltip,
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -331,6 +332,13 @@ export default function PlayerLab() {
   const [combineInputs,    setCombineInputs]    = useState({})
   const [comparePlayerName,setComparePlayerName] = useState(null)
 
+  // Detect deep-link arrival from MatchupAnalyzer so we can show a back-link.
+  // navigate(-1) is preferred over a hard route — preserves the user's prior
+  // matchup-tab state.
+  const location = useLocation()
+  const navigate = useNavigate()
+  const arrivedFromMatchup = location.state?.from === 'matchup'
+
   // localStorage key for a player's combine inputs
   const combineStorageKey = player =>
     player ? `ivy_combine_${player.school}_${player.year}_${player.name}` : null
@@ -539,6 +547,20 @@ export default function PlayerLab() {
       />
 
       <div style={{ padding: '0 28px 28px', maxWidth: 1320, margin: '0 auto' }}>
+
+      {arrivedFromMatchup && (
+        <div style={{ paddingTop: 16 }}>
+          <button
+            onClick={() => navigate(-1)}
+            style={{
+              background: 'transparent', border: `1px solid ${T.border}`, borderRadius: 6,
+              padding: '5px 12px', fontSize: 12, color: T.textMd, cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}>
+            ← Back to matchup
+          </button>
+        </div>
+      )}
 
       {/* ── Profile Tab ── */}
       {tab === 'profile' && (
