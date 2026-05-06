@@ -92,12 +92,13 @@ function winPctRange(p) {
 
 // "Same year" projections show the percent; "cross-year" projections collapse
 // to the band + 5%-range so the UI doesn't claim a precision the model can't
-// support across rating-recalibration boundaries.
+// support across rating-recalibration boundaries. Honors the probability the
+// caller passes in — when both teams' win-prob stats are rendered, the
+// underdog must show its actual probability, not the favorite's flipped one.
 function fmtWinPctDisplay(p, crossYear) {
   if (p == null) return null
-  const fav = p >= 0.5 ? p : 1 - p
-  if (crossYear) return winPctRange(fav)
-  return `${(fav * 100).toFixed(0)}%`
+  if (crossYear) return winPctRange(p)
+  return `${(p * 100).toFixed(0)}%`
 }
 
 function inchesToFtIn(inches) {
