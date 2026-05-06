@@ -86,10 +86,11 @@ function positionBreakdownWeighted(allPlayers, year) {
 const PRIORITY_COLORS = { Critical: '#ef4444', High: '#f97316', Medium: '#f59e0b', Maintenance: '#10b981' }
 
 // higherBetter: true = higher wins, false = lower wins, null = neutral (no color coding)
+// or_pct/ast_pct intentionally absent — see constants.js note about wrong scale.
 const STAT_HB = {
   pts: true, treb: true, ast: true, stl: true, blk: true,
   ortg: true, efg: true, ts_pct: true, ft_pct: true,
-  ftr: null, usg: null, ast_pct: true, drtg: false, or_pct: true, bpm: true,
+  ftr: null, usg: null, drtg: false, bpm: true,
 }
 
 function statColorFor(key, myVal, otherVal, myColor) {
@@ -109,7 +110,6 @@ const COMPARE_STATS = [
   { key: 'ortg',    label: 'Off Rating', higherBetter: true,  fmt: v => v.toFixed(0) },
   { key: 'drtg',    label: 'Def Rating', higherBetter: false, fmt: v => v.toFixed(0) },
   { key: 'usg',     label: 'Usage%',     higherBetter: null,  fmt: v => v.toFixed(1) + '%' },
-  { key: 'ast_pct', label: 'Assist%',    higherBetter: true,  fmt: v => v.toFixed(1) + '%' },
   { key: 'bpm',     label: 'BPM',        higherBetter: true,  fmt: v => (v > 0 ? '+' : '') + v.toFixed(2) },
   { key: 'min_pg',  label: 'Min/G',      higherBetter: null,  fmt: v => v.toFixed(1) },
 ]

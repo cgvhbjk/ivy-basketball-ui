@@ -590,34 +590,6 @@ export function classYearNum(yr) {
   return { Fr: 1, So: 2, Jr: 3, Sr: 4, Grad: 5, GR: 5 }[yr] ?? null
 }
 
-function isGuard(p)   { return /(PG|Combo G|Wing G|Scoring PG)/i.test(p.pos_type ?? '') }
-function isForward(p) { return /(Wing F|Stretch|SF)/i.test(p.pos_type ?? '') }
-function isBig(p)     { return /(PF\/C|^C$|Post|Center)/i.test(p.pos_type ?? '') }
-
-export function buildRosterAggregates(players) {
-  const byKey = {}
-  for (const p of players) {
-    if (!p.min_pg || p.min_pg < 6) continue
-    const k = `${p.school}||${p.year}`
-    if (!byKey[k]) byKey[k] = { school: p.school, year: p.year, ps: [] }
-    byKey[k].ps.push(p)
-  }
-  const avg = arr => arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : null
-  return Object.values(byKey).map(({ school, year, ps }) => {
-    const n = ps.length
-    const heights = ps.map(p => parseHeightIn(p.height)).filter(v => v != null)
-    const exps    = ps.map(p => classYearNum(p.class_yr)).filter(v => v != null)
-    return {
-      school, year, n,
-      avg_height_in:  heights.length ? parseFloat(avg(heights).toFixed(1)) : null,
-      avg_experience: exps.length    ? parseFloat(avg(exps).toFixed(2))    : null,
-      pct_guards:     parseFloat((ps.filter(isGuard).length   / n * 100).toFixed(1)),
-      pct_forwards:   parseFloat((ps.filter(isForward).length / n * 100).toFixed(1)),
-      pct_bigs:       parseFloat((ps.filter(isBig).length     / n * 100).toFixed(1)),
-    }
-  })
-}
-
 export function computeBiodataRelationship(rosterAggs, teamSeasons, biodataKey, outcomeKey) {
   const seasonMap = new Map(teamSeasons.map(s => [`${s.school}||${s.year}`, s]))
   const joined = rosterAggs
@@ -635,17 +607,6 @@ export function computeBiodataRelationship(rosterAggs, teamSeasons, biodataKey, 
     points: joined,
     correlation: r == null ? null : +r.toFixed(3),
     n: joined.length,
-  }
-}
-
-export function computePlayerRelationship(players, xKey, yKey) {
-  const rows = players.filter(p => p[xKey] != null && p[yKey] != null && p.min_pg >= 10)
-  const xs = rows.map(p => p[xKey]), ys = rows.map(p => p[yKey])
-  const r = pearsonCorrelation(xs, ys)
-  return {
-    points: rows.map(p => ({ x: p[xKey], y: p[yKey], school: p.school, name: p.name, year: p.year, pos_type: p.pos_type })),
-    correlation: r == null ? null : +r.toFixed(3),
-    n: rows.length,
   }
 }
 
@@ -834,36 +795,6 @@ export function buildRosterAggregatesWeighted(players) {
       big_min_share:    minShare(bigs),
     }
   })
-}
-
-// For each unique cross-school pairing in the same year, compute physical and performance diffs.
-// Returns array of { schoolA, schoolB, year, heightDiff, expDiff, winPctDiff, netEffDiff }
-// Useful for "does height advantage predict winning?" scatter analysis.
-export function buildPhysicalMatchupPairs(teamSeasons, rosterAggs) {
-  const pairs = []
-  const years = [...new Set(rosterAggs.map(a => a.year))]
-  for (const year of years) {
-    const aggsThisYear = rosterAggs.filter(a => a.year === year)
-    for (let i = 0; i < aggsThisYear.length; i++) {
-      for (let j = i + 1; j < aggsThisYear.length; j++) {
-        const aggA = aggsThisYear[i]
-        const aggB = aggsThisYear[j]
-        if (aggA.avg_height_in == null || aggB.avg_height_in == null) continue
-        const sA = teamSeasons.find(s => s.school === aggA.school && s.year === year)
-        const sB = teamSeasons.find(s => s.school === aggB.school && s.year === year)
-        if (!sA || !sB) continue
-        pairs.push({
-          schoolA: aggA.school, schoolB: aggB.school, year,
-          heightDiff:  +(aggA.avg_height_in  - aggB.avg_height_in).toFixed(1),
-          expDiff:     aggA.avg_experience != null && aggB.avg_experience != null
-                         ? +(aggA.avg_experience - aggB.avg_experience).toFixed(2) : null,
-          winPctDiff:  +(sA.win_pct - sB.win_pct).toFixed(3),
-          netEffDiff:  +(sA.net_efficiency - sB.net_efficiency).toFixed(2),
-        })
-      }
-    }
-  }
-  return pairs
 }
 
 // Data quality check for a specific team-season

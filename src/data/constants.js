@@ -94,8 +94,12 @@ export const PLAYER_METRICS = [
   { key: 'ts_pct',  label: 'True Shooting %',    higherBetter: true,  fmt: v => v.toFixed(1) + '%' },
   { key: 'ft_pct',  label: 'FT%',                higherBetter: true,  fmt: v => v.toFixed(1) + '%' },
   { key: 'min_pg',  label: 'Min/G',              higherBetter: null,  fmt: v => v.toFixed(1) },
-  { key: 'or_pct',  label: 'Off Reb %',          higherBetter: true,  fmt: v => v.toFixed(1) + '%' },
-  { key: 'ast_pct', label: 'Assist %',           higherBetter: true,  fmt: v => v.toFixed(1) + '%' },
+  // or_pct and ast_pct were removed from this list because the values in
+  // players.json are not the percentages the labels imply: or_pct is a
+  // Barttorvik national rank (typical 1–270) and ast_pct is stored as a small
+  // decimal (0.1–0.8). Rendering them as `${v}%` produced strings like
+  // "202.0%" and "0.4%". The per-game `treb`/`oreb`/`ast` already cover the
+  // same conceptual ground for display.
 ]
 
 export const PLAYER_METRIC_MAP = Object.fromEntries(PLAYER_METRICS.map(m => [m.key, m]))

@@ -144,9 +144,14 @@ function NotablePlayerCard({ player, teamColor, onPlayerClick }) {
       </div>
       <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 8, fontStyle: 'italic' }}>{role}</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4 }}>
-        {[['REB', player.treb], ['AST', player.ast], ['eFG', player.efg != null ? player.efg.toFixed(0)+'%' : '—'], ['BPM', player.bpm != null ? (player.bpm > 0 ? '+' : '') + player.bpm.toFixed(1) : '—']].map(([lbl, val]) => (
+        {[
+          ['REB', player.treb != null ? player.treb.toFixed(1) : '—'],
+          ['AST', player.ast  != null ? player.ast.toFixed(1)  : '—'],
+          ['eFG', player.efg  != null ? player.efg.toFixed(1) + '%' : '—'],
+          ['BPM', player.bpm  != null ? (player.bpm > 0 ? '+' : '') + player.bpm.toFixed(1) : '—'],
+        ].map(([lbl, val]) => (
           <div key={lbl} style={{ textAlign: 'center', background: '#0e0e0e', borderRadius: 4, padding: '4px 0' }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: '#ebebeb' }}>{val?.toFixed ? val.toFixed(1) : val}</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#ebebeb' }}>{val}</div>
             <div style={{ fontSize: 9, color: '#4b5563' }}>{lbl}</div>
           </div>
         ))}
@@ -266,7 +271,7 @@ export default function MatchupAnalyzer() {
 
   const matchupInsights = useMemo(() =>
     generateMatchupInsights(seasonA, seasonB, posCompare, schemeOffA, schemeOffB, metaA.abbr, metaB.abbr)
-  , [seasonA, seasonB, posCompare, schemeOffA, schemeOffB])
+  , [seasonA, seasonB, posCompare, schemeOffA, schemeOffB, metaA.abbr, metaB.abbr])
 
   const winPctA = useMemo(() => {
     if (!seasonA || !seasonB) return null
@@ -433,7 +438,7 @@ export default function MatchupAnalyzer() {
     })
 
     return items
-  }, [seasonA, seasonB, winPctA, metaA, metaB, netA, netB, schemeOffA, schemeOffB, schemeDefA, schemeDefB, posCompare, colorA, colorB, crossYear])
+  }, [seasonA, seasonB, winPctA, winBand, metaA, metaB, netA, netB, schemeOffA, schemeOffB, schemeDefA, schemeDefB, posCompare, colorA, colorB, crossYear])
 
   return (
     <div style={{ background: T.bg, minHeight: '100vh' }}>
