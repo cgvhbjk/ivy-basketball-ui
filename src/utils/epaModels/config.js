@@ -129,3 +129,13 @@ export const MODEL_LABELS = {
   ridge_split:      'Ridge Split (off+def, CV α)',
   constrained_ols:  'Constrained OLS (sign-enforced)',
 }
+
+// One-sentence plain-English description per model — used as hover tooltips
+// in the comparison table so a user without statistics background can tell
+// what each model actually does.
+export const MODEL_DESCRIPTIONS = {
+  ols_joint:        'Standard regression on all 8 factors at once. No regularization, no shrinkage — the textbook fit.',
+  ridge_joint:      'Same 8-factor fit, but penalizes large coefficients to handle small samples. Penalty strength chosen by cross-validation.',
+  ridge_split:      'Fits offense and defense as two separate 4-predictor models — predicts ppp and opp_ppp directly. Avoids the small-sample noise that flips signs in the joint models.',
+  constrained_ols:  'Forces every coefficient to match the empirically-verified sign from the Phase-0 audit. Wrong-signed coefficients get clipped to exactly zero. This is the model whose values feed the displayed event EPA.',
+}

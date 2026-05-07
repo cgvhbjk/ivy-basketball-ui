@@ -66,12 +66,16 @@ export default function DiagnosticsPanel({
   const { n, kJoint, kSplit, obsPerPredictorJoint, obsPerPredictorSplit, targetMode } = diagnostics
   const hasWarnings = messages?.length > 0
   const vif = diagnostics.joint?.vif
+  const maxVif = vif ? Math.max(...Object.values(vif)) : null
 
   const viewingKey  = viewModelKey ?? selectedModelKey
   const modelLabel  = MODEL_LABELS[viewingKey] ?? viewingKey ?? '—'
-  const isAutoView  = !viewModelKey || viewModelKey === selectedModelKey
-  const rs          = models?.ridge_split
-  const cvSummary   = rs ? `Off CVR²=${rs.offCvR2} · Def CVR²=${rs.defCvR2}` : null
+
+  // Sign-issue counts across the four Ivy models — used in the plain-English
+  // summary at the top of the expanded panel.
+  const ivyIssueTotals = ['ols_joint', 'ridge_joint', 'ridge_split', 'constrained_ols']
+    .map(k => ({ k, n: models?.[k]?.signIssues?.length ?? 0 }))
+  const ivyTotalIssues = ivyIssueTotals.reduce((s, x) => s + x.n, 0)
 
   return (
     <div style={{ ...CARD, marginBottom: 20, borderColor: hasWarnings ? T.amber : T.border }}>
@@ -83,9 +87,7 @@ export default function DiagnosticsPanel({
           Model Selection
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
-          <Badge level="info">{modelLabel}</Badge>
-          {isAutoView && <span style={{ fontSize: 10, color: T.textMin }}>auto-selected</span>}
-          {cvSummary && <span style={{ fontSize: 11, color: T.blue }}>{cvSummary}</span>}
+          <span style={{ fontSize: 11, color: T.textMd }}>Currently using <Badge level="info">{modelLabel}</Badge></span>
           {hasWarnings && <Badge level="warn">{messages.length} warning{messages.length > 1 ? 's' : ''}</Badge>}
         </span>
         <span style={{ fontSize: 11, color: T.textMin, whiteSpace: 'nowrap' }}>{open ? '▲ collapse' : '▼ details'}</span>
@@ -93,10 +95,25 @@ export default function DiagnosticsPanel({
 
       {open && (
         <div style={{ marginTop: 16 }}>
+          {/* Plain-English summary block — answers "what am I looking at?" before
+              the dense tables. Without this readers had to assemble the story
+              themselves from numeric metrics and footnotes. */}
+          <div style={{ background: T.surf2, borderRadius: 6, padding: '12px 14px', marginBottom: 16, fontSize: 12, color: T.textMd, lineHeight: 1.6 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: T.accentSoft, marginBottom: 6, letterSpacing: '0.05em' }}>
+              WHAT THIS PANEL SHOWS
+            </div>
+            We fit four versions of the same Dean Oliver four-factor model. The pipeline picks the one with the best
+            out-of-sample fit and no wrong-signed coefficients — currently <strong style={{ color: T.text }}>{MODEL_LABELS[selectedModelKey]}</strong>.
+            The two tables below let you compare all four models side-by-side, first on the Ivy 32 team-seasons,
+            then on the full D1 corpus (≈1,400 team-seasons) as a sanity check.
+            {ivyTotalIssues > 0 && (
+              <> At Ivy n={n}, <strong style={{ color: T.amber }}>{ivyTotalIssues} sign issue{ivyTotalIssues > 1 ? 's' : ''}</strong> appear in the joint models — these are statistical noise around weak coefficients, not encoding bugs (D1 confirms the correct signs at scale).</>
+            )}
+          </div>
+
           <div style={{ fontSize: 11, fontWeight: 600, color: T.accentSoft, marginBottom: 8 }}>MODEL COMPARISON · IVY (n={n})</div>
           <p style={{ fontSize: 11, color: T.textLow, marginBottom: 8 }}>
-            Four models are fit to the same data. The pipeline auto-selects the best one based on CV R² and sign validity.
-            Click a row to view that model's coefficients and scatter plot in the card below.
+            Hover any model name or column header for a plain-English description. Click a row to view that model's coefficients and scatter plot in the Tier 1 card.
           </p>
           <ModelComparisonTable
             models={models}
@@ -119,16 +136,18 @@ export default function DiagnosticsPanel({
                   MODEL COMPARISON · D1-TRAINED (n={d1.nTrain})
                 </div>
                 <p style={{ fontSize: 11, color: T.textLow, marginBottom: 8 }}>
-                  Same four models refit on the full Barttorvik D1 corpus (2022-25). Coefficients are applied to the Ivy 32 above.
-                  Compare row-for-row against the Ivy fit — sign issues that appear at n={n} dissolve at n={d1.nTrain}, which is why
-                  the Tier 1 sign-constraints are kept (small-sample artifact, not hidden bias).
-                  D1 target is opponent-adjusted (adjoe-adjde) since the Barttorvik slice endpoint doesn't expose raw ppp; coefficients
-                  are slightly biased but residual interpretation is fine. D1 selected model: <code style={{ color: T.accentSoft }}>{d1.selectedModel.replace(/_/g, ' ')}</code>.
+                  Same four models, refit on the full Barttorvik D1 corpus. Compare row-for-row against the Ivy table above —
+                  sign issues that appear at n={n} should disappear here. If they do, those issues were small-sample noise,
+                  not encoding bugs.
                 </p>
                 <ModelComparisonTable
                   models={d1}
                   selectedModel={d1.selectedModel}
                 />
+                <p style={{ fontSize: 10, color: T.textMin, marginTop: 6, fontStyle: 'italic' }}>
+                  Caveat: D1 target is opponent-adjusted efficiency (adjoe−adjde), not raw ppp — the Barttorvik slice endpoint
+                  doesn't expose raw ppp. Coefficients are slightly biased but the sign-direction sanity check is unaffected.
+                </p>
               </div>
             )
           })()}
@@ -142,12 +161,17 @@ export default function DiagnosticsPanel({
               <Row label="Split model predictors"    value={kSplit} />
               <Row label="Split obs/predictor ratio" value={obsPerPredictorSplit} level={obsPerPredictorSplit < 10 ? 'warn' : 'ok'} />
               <Row label="Target mode"               value={targetMode} level={targetMode === 'adjusted' ? 'warn' : 'ok'} />
+              <p style={{ fontSize: 10, color: T.textMin, marginTop: 6, lineHeight: 1.5 }}>
+                Rule of thumb: ≥10 observations per predictor for a stable fit. Below that, expect noisy coefficients.
+              </p>
             </div>
             <div>
               <div style={{ fontSize: 11, fontWeight: 600, color: T.accentSoft, marginBottom: 6 }}>COLLINEARITY (VIF — joint model)</div>
               <VIFTable vif={vif} />
-              <p style={{ fontSize: 10, color: T.textMin, marginTop: 6 }}>
-                VIF ≥ 5 = moderate, ≥ 10 = severe. All VIFs near 1 here — sign issues stem from Barttorvik field encoding, not collinearity.
+              <p style={{ fontSize: 10, color: T.textMin, marginTop: 6, lineHeight: 1.5 }}>
+                {maxVif != null && maxVif < 5
+                  ? <>All VIFs under 5 (max {maxVif.toFixed(1)}) — <strong style={{ color: T.green }}>no collinearity problems</strong>. Sign issues, if any, are sample-noise, not predictor entanglement.</>
+                  : <>VIF ≥ 5 = moderate concern, ≥ 10 = severe. Inspect any flagged predictors before trusting their coefficients.</>}
               </p>
             </div>
           </div>

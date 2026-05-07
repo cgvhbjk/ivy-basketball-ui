@@ -1,5 +1,5 @@
 import { T } from '../../styles/theme.js'
-import { MODEL_LABELS } from '../../utils/epaModels/config.js'
+import { MODEL_LABELS, MODEL_DESCRIPTIONS } from '../../utils/epaModels/config.js'
 
 function Cell({ children, highlight }) {
   return (
@@ -13,13 +13,23 @@ function Cell({ children, highlight }) {
 }
 
 function SignBadge({ count }) {
-  if (count === 0) return <span style={{ color: T.green, fontWeight: 600 }}>✓ 0</span>
-  return <span style={{ color: T.amber, fontWeight: 600 }}>⚠ {count}</span>
+  if (count === 0) return <span title="No sign violations — every coefficient points in the direction the empirical Phase-0 audit verified" style={{ color: T.green, fontWeight: 600 }}>✓ 0</span>
+  return <span title={`${count} coefficient${count > 1 ? 's' : ''} pointing opposite to the empirical sign — at small n these are usually near-zero coefficients flipped by sample noise`} style={{ color: T.amber, fontWeight: 600 }}>⚠ {count}</span>
 }
 
 function AlphaBadge({ alpha }) {
   if (alpha == null) return <span style={{ color: T.textMin }}>—</span>
-  return <span style={{ color: T.blue }}>λ={alpha}</span>
+  return <span title="Ridge regularization strength. Larger λ pulls coefficients toward zero." style={{ color: T.blue }}>λ={alpha}</span>
+}
+
+// One-line hover explanation per column header — addresses the "I don't know
+// what this metric means" friction without taking layout space.
+const COL_TOOLTIPS = {
+  cv:    'Out-of-sample fit quality (leave-one-out cross-validation). Higher is better. This is the right metric to compare models — in-sample R² is biased upward.',
+  r2:    'Fit quality on the training data itself. Always higher than CV R². Don\'t use this to choose between models.',
+  rmse:  'Root-mean-square prediction error, in points per 100 possessions. Lower is better.',
+  signs: 'Number of coefficients with the opposite sign from the empirical Phase-0 audit. ✓ 0 = all signs match expectations; ⚠ N = N small-sample noise flips.',
+  reg:   'How much shrinkage is applied (λ for ridge, none for OLS, sign clamps for constrained).',
 }
 
 export default function ModelComparisonTable({ models, selectedModel, viewModelKey, onSelectModel }) {
@@ -43,11 +53,11 @@ export default function ModelComparisonTable({ models, selectedModel, viewModelK
         <thead>
           <tr style={{ borderBottom: `1px solid ${T.border}` }}>
             <th style={{ textAlign: 'left', padding: '6px 10px', color: T.textLow, fontWeight: 500 }}>Model</th>
-            <th style={{ textAlign: 'center', padding: '6px 10px', color: T.textLow, fontWeight: 500 }}>LOO-CV R²</th>
-            <th style={{ textAlign: 'center', padding: '6px 10px', color: T.textLow, fontWeight: 500 }}>In-sample R²</th>
-            <th style={{ textAlign: 'center', padding: '6px 10px', color: T.textLow, fontWeight: 500 }}>RMSE</th>
-            <th style={{ textAlign: 'center', padding: '6px 10px', color: T.textLow, fontWeight: 500 }}>Sign issues</th>
-            <th style={{ textAlign: 'center', padding: '6px 10px', color: T.textLow, fontWeight: 500 }}>Regularizer</th>
+            <th title={COL_TOOLTIPS.cv}    style={{ textAlign: 'center', padding: '6px 10px', color: T.textLow, fontWeight: 500, cursor: 'help' }}>LOO-CV R² ⓘ</th>
+            <th title={COL_TOOLTIPS.r2}    style={{ textAlign: 'center', padding: '6px 10px', color: T.textLow, fontWeight: 500, cursor: 'help' }}>In-sample R² ⓘ</th>
+            <th title={COL_TOOLTIPS.rmse}  style={{ textAlign: 'center', padding: '6px 10px', color: T.textLow, fontWeight: 500, cursor: 'help' }}>RMSE ⓘ</th>
+            <th title={COL_TOOLTIPS.signs} style={{ textAlign: 'center', padding: '6px 10px', color: T.textLow, fontWeight: 500, cursor: 'help' }}>Sign issues ⓘ</th>
+            <th title={COL_TOOLTIPS.reg}   style={{ textAlign: 'center', padding: '6px 10px', color: T.textLow, fontWeight: 500, cursor: 'help' }}>Regularizer ⓘ</th>
           </tr>
         </thead>
         <tbody>
@@ -80,10 +90,10 @@ export default function ModelComparisonTable({ models, selectedModel, viewModelK
                   cursor: onSelectModel ? 'pointer' : 'default',
                 }}
               >
-                <td style={{ padding: '7px 10px', fontSize: 12, color: isViewing ? T.accentSoft : T.text, fontWeight: isViewing ? 600 : 400 }}>
+                <td title={MODEL_DESCRIPTIONS[key]} style={{ padding: '7px 10px', fontSize: 12, color: isViewing ? T.accentSoft : T.text, fontWeight: isViewing ? 600 : 400, cursor: 'help' }}>
                   {MODEL_LABELS[key]}
                   {isAutoSelected && (
-                    <span style={{ marginLeft: 6, fontSize: 10, color: T.textMin, fontWeight: 400 }}>auto</span>
+                    <span title="Auto-picked by the pipeline as the best fit for the displayed coefficients" style={{ marginLeft: 6, fontSize: 10, padding: '1px 6px', borderRadius: 3, background: T.greenBg, color: T.green, fontWeight: 700 }}>✓ in use</span>
                   )}
                   {isViewing && !isAutoSelected && (
                     <span style={{ marginLeft: 6, fontSize: 10, color: T.accentSoft }}>← viewing</span>
@@ -104,8 +114,8 @@ export default function ModelComparisonTable({ models, selectedModel, viewModelK
         </tbody>
       </table>
       <p style={{ fontSize: 10, color: T.textMin, marginTop: 6 }}>
-        LOO-CV R²: leave-one-out cross-validated (out-of-sample). In-sample R² will always be higher — do not use it to compare models.
-        {onSelectModel && ' Click a row to view that model\'s coefficients and scatter plot.'}
+        Hover over a column header or model name for a plain-English explanation.
+        {onSelectModel && ' Click a row to view that model\'s coefficients and scatter plot in the card above.'}
       </p>
     </div>
   )
