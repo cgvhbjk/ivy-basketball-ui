@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { T, CARD } from '../../styles/theme.js'
 import { MODEL_LABELS } from '../../utils/epaModels/config.js'
+import { getD1EPAModels } from '../../utils/calibrationCache.js'
 import ModelComparisonTable from './ModelComparisonTable.jsx'
 
 function Badge({ level, children }) {
@@ -92,7 +93,7 @@ export default function DiagnosticsPanel({
 
       {open && (
         <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: T.accentSoft, marginBottom: 8 }}>MODEL COMPARISON</div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: T.accentSoft, marginBottom: 8 }}>MODEL COMPARISON · IVY (n={n})</div>
           <p style={{ fontSize: 11, color: T.textLow, marginBottom: 8 }}>
             Four models are fit to the same data. The pipeline auto-selects the best one based on CV R² and sign validity.
             Click a row to view that model's coefficients and scatter plot in the card below.
@@ -108,6 +109,29 @@ export default function DiagnosticsPanel({
             <span style={{ fontWeight: 600, color: T.textMd }}>Why this model was auto-selected: </span>
             {selectionReason ?? '—'}
           </div>
+
+          {(() => {
+            const d1 = getD1EPAModels()
+            if (!d1) return null
+            return (
+              <div style={{ marginTop: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: T.green, marginBottom: 8, letterSpacing: '0.06em' }}>
+                  MODEL COMPARISON · D1-TRAINED (n={d1.nTrain})
+                </div>
+                <p style={{ fontSize: 11, color: T.textLow, marginBottom: 8 }}>
+                  Same four models refit on the full Barttorvik D1 corpus (2022-25). Coefficients are applied to the Ivy 32 above.
+                  Compare row-for-row against the Ivy fit — sign issues that appear at n={n} dissolve at n={d1.nTrain}, which is why
+                  the Tier 1 sign-constraints are kept (small-sample artifact, not hidden bias).
+                  D1 target is opponent-adjusted (adjoe-adjde) since the Barttorvik slice endpoint doesn't expose raw ppp; coefficients
+                  are slightly biased but residual interpretation is fine. D1 selected model: <code style={{ color: T.accentSoft }}>{d1.selectedModel.replace(/_/g, ' ')}</code>.
+                </p>
+                <ModelComparisonTable
+                  models={d1}
+                  selectedModel={d1.selectedModel}
+                />
+              </div>
+            )
+          })()}
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginTop: 16 }}>
             <div>

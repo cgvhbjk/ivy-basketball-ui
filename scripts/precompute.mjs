@@ -70,13 +70,31 @@ if (existsSync(d1Path)) {
     console.warn(`  d1 pipeline error: ${result.messages.join(' | ')}`)
   }
   if (result.status !== 'error' && result.models) {
+    // Drop the heavy stuff (states, EPA events, observations) since those get
+    // recomputed at runtime against the live baseline. Keep coefficients plus
+    // the small fit-quality metrics the model-comparison table needs to render
+    // the D1 row alongside the Ivy n=32 fit.
+    const slim = (m) => m && !m.error ? {
+      coefficients: m.coefficients,
+      r2:           m.r2 ?? null,
+      cvR2:         m.cvR2 ?? null,
+      rmse:         m.rmse ?? null,
+      bestAlpha:    m.bestAlpha ?? null,
+      signIssues:   m.signIssues ?? [],
+    } : null
+    const slimSplit = (m) => m && !m.error ? {
+      coefficients: m.coefficients,
+      offModel: m.offModel ? { r2: m.offModel.r2, rmse: m.offModel.rmse, bestAlpha: m.offModel.bestAlpha } : null,
+      defModel: m.defModel ? { r2: m.defModel.r2, rmse: m.defModel.rmse, bestAlpha: m.defModel.bestAlpha } : null,
+      offCvR2:    m.offCvR2 ?? null,
+      defCvR2:    m.defCvR2 ?? null,
+      signIssues: m.signIssues ?? [],
+    } : null
     d1Models = {
-      // Keep just coefficients + selectionReason — the heavy stuff (states, EPA
-      // events) gets recomputed at runtime so it stays sensitive to baseline_epa.
-      ols_joint:       result.models.ols_joint?.coefficients       ?? null,
-      ridge_joint:     result.models.ridge_joint?.coefficients     ?? null,
-      ridge_split:     result.models.ridge_split?.coefficients     ?? null,
-      constrained_ols: result.models.constrained_ols?.coefficients ?? null,
+      ols_joint:       slim(result.models.ols_joint),
+      ridge_joint:     slim(result.models.ridge_joint),
+      ridge_split:     slimSplit(result.models.ridge_split),
+      constrained_ols: slim(result.models.constrained_ols),
       selectedModel:   result.selectedModel,
       selectionReason: result.selectionReason,
       nTrain:          result.nTrain,

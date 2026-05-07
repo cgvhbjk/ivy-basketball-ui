@@ -8,7 +8,6 @@ import gameLogs     from '../data/gameLogs.json'
 import baselineEP   from '../data/baseline_epa.json'
 import { runEPAPipeline } from '../utils/epaModels/pipeline.js'
 import { runTier2Pipeline } from '../utils/epaModels/tier2.js'
-import { getD1EPAModels } from '../utils/calibrationCache.js'
 import useEpaStore from '../store/useEpaStore.js'
 import PageHeader from '../components/shared/PageHeader.jsx'
 import DiagnosticsPanel from '../components/epa/DiagnosticsPanel.jsx'
@@ -395,57 +394,6 @@ function TierCard({ badge, description, tier, result, activeComparison, observat
   )
 }
 
-// ── D1 comparison panel ──────────────────────────────────────────────────────
-// Shows the four-factor coefficients fitted on the full Barttorvik D1 corpus
-// (~1400 obs) alongside a note that the n=32 collinearity which forces the
-// Ivy-only constrained model to zero TOV/ORB is dissolved at this scale.
-
-function D1ComparisonPanel() {
-  const d1 = getD1EPAModels()
-  if (!d1?.ridge_split) return null
-  const c = d1.ridge_split
-  const rows = [
-    ['off_eFG', c.off_eFG], ['off_TOV', c.off_TOV], ['off_ORB', c.off_ORB], ['off_FTR', c.off_FTR],
-    ['def_eFG', c.def_eFG], ['def_TOV', c.def_TOV], ['def_ORB', c.def_ORB], ['def_FTR', c.def_FTR],
-  ]
-  return (
-    <div style={{ ...CARD, marginTop: 20 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: T.green, letterSpacing: '0.06em' }}>D1-TRAINED</span>
-        <span style={{ fontSize: 14, fontWeight: 600, color: T.textHi }}>Four-factor coefficients fit on full D1 corpus</span>
-      </div>
-      <div style={{ fontSize: 12, color: T.textMd, lineHeight: 1.6, marginBottom: 14, maxWidth: 720 }}>
-        Coefficients fitted on <strong>{d1.nTrain}</strong> D1 team-seasons (Barttorvik, 2022-25), applied to the Ivy 32 above.
-        At this scale TOV% and ORB% have stable, non-zero estimates — the n=32 collinearity that forces the constrained
-        Ivy-only model to zero them out dissolves here. The selected D1 model is{' '}
-        <code style={{ fontSize: 11, color: T.accentSoft }}>{d1.selectedModel.replace(/_/g, ' ')}</code>.
-        Note: target is opponent-adjusted (adjoe-adjde) since the Barttorvik slice endpoint doesn't expose raw ppp;
-        coefficients are slightly biased but residual interpretation is fine.
-      </div>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>
-        <thead>
-          <tr>
-            <th style={{ textAlign: 'left',  padding: '6px 8px', color: T.textLow, fontSize: 10, textTransform: 'uppercase', borderBottom: `1px solid ${T.border}` }}>Factor</th>
-            <th style={{ textAlign: 'right', padding: '6px 8px', color: T.textLow, fontSize: 10, textTransform: 'uppercase', borderBottom: `1px solid ${T.border}` }}>Coefficient</th>
-            <th style={{ textAlign: 'left',  padding: '6px 8px', color: T.textLow, fontSize: 10, textTransform: 'uppercase', borderBottom: `1px solid ${T.border}` }}>Direction</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(([name, val]) => (
-            <tr key={name}>
-              <td style={{ padding: '6px 8px', color: T.textMd }}>{name}</td>
-              <td style={{ padding: '6px 8px', textAlign: 'right', color: T.textHi, fontWeight: 600 }}>{val >= 0 ? '+' : ''}{val.toFixed(3)}</td>
-              <td style={{ padding: '6px 8px', color: T.textLow, fontSize: 11 }}>
-                {Math.abs(val) < 0.05 ? 'near-zero' : val > 0 ? 'increases target' : 'decreases target'}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 const TABS = ['events', 'coefficients', 'scatter', 'state']
@@ -544,8 +492,6 @@ export default function EpaLab() {
                 epaOverride={pipeline.selectedEventEPA}
                 statesOverride={pipeline.selectedStates}
               />
-
-              <D1ComparisonPanel />
             </>
         }
 
@@ -561,7 +507,7 @@ export default function EpaLab() {
 
         <PageConclusions prominent conclusions={[
           { label: 'What EPA measures', color: T.accentSoft, text: 'EPA (Expected Points Added) converts regression coefficients from the Dean Oliver four-factor model into intuitive per-event values. A made 2-pt FG adds ~2.36 pts of net efficiency per 100 possessions. These are not assumed weights — they are estimated from Ivy League game data.' },
-          { label: 'Why TOV/ORB are omitted in Ivy-only Tier 1', color: T.amber, text: 'With only n=32 Ivy team-seasons, TOV% and ORB% are sufficiently correlated with eFG% that all models — including unconstrained ridge — produce wrong-signed coefficients for those two factors. The constrained model correctly zeroes them. The D1-trained panel above fits on n≈1400 and recovers stable, non-zero TOV/ORB estimates, demonstrating the constraint is a small-sample artifact rather than a structural fact.' },
+          { label: 'Why TOV/ORB are omitted in Ivy-only Tier 1', color: T.amber, text: 'With only n=32 Ivy team-seasons, TOV% and ORB% are sufficiently correlated with eFG% that all models — including unconstrained ridge — produce wrong-signed coefficients for those two factors. The constrained model correctly zeroes them. The D1-trained row in the Model Selection panel (open it for details) fits on n≈1400 and recovers stable, non-zero TOV/ORB estimates, demonstrating the constraint is a small-sample artifact rather than a structural fact.' },
           { label: 'Model selection logic', color: T.blue, text: 'Four models are fit: OLS, Ridge joint, Ridge split (offense/defense separate), and Constrained OLS (NNLS with theory-correct sign constraints). The pipeline auto-selects by LOO-CV R² and sign validity. EPA event values always come from the constrained model to ensure correct sign direction.' },
           { label: 'Tier 1 vs Tier 2 (when populated)', color: T.green, text: 'Tier 1 uses season-aggregate four-factor data (Barttorvik, 2022–25). Tier 2 is intended for per-game box scores from the ESPN API for the same 8 schools and seasons. Real Tier 2 data would have ~28× more observations, better isolate game-level variance, and stabilise TOV/ORB estimates. Today\'s Tier 2 panel is fed by synthetic data and its numbers are suppressed by default.' },
         ]} />
