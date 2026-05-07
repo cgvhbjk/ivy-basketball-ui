@@ -67,11 +67,20 @@ export function convertToEventEPA(coefficients, leagueRates, baselineEP = null, 
   const scale        = 100 / fgaP100
 
   // ── Aggregate values (regression-only) ────────────────────────────────────
+  // Note on tov_o / orb sign flip: Barttorvik's `tov_o` and `orb` columns are
+  // encoded with non-textbook direction (Phase-0 audit verified: tov_o higher
+  // = better, orb higher = worse — likely percentile-rank-style fields). The
+  // regression coefficients lock those encoded directions, so off_TOV is
+  // positive and off_ORB is negative on the encoded variable. To present
+  // event-EPA values in natural-language direction (turnover negative,
+  // rebound positive), the per-event aggregate negates these two before
+  // display. The model coefficients themselves are unchanged — this is purely
+  // a display-side flip so the row labels match the values' interpretation.
   const aggregate = {
     made2FG:            +(off_eFG  * scale).toFixed(3),
     made3FG:            +(off_eFG  * scale * THREE_PT_eFG_MULTIPLIER).toFixed(3),
-    offTurnover:        +(off_TOV).toFixed(3),
-    offRebound:         +(off_ORB  * ORB_POSSESSION_CREDIT).toFixed(3),
+    offTurnover:        +(-off_TOV).toFixed(3),
+    offRebound:         +(-off_ORB * ORB_POSSESSION_CREDIT).toFixed(3),
     foulDrawn:          +(off_FTR  * scale).toFixed(3),
     // Joint model: def_TOV > 0 (more opp TO → better net eff) → EPA = +def_TOV
     // Split model: def_TOV < 0 (more opp TO → lower opp_ppp) → EPA = −def_TOV
@@ -176,7 +185,7 @@ export function convertToEventEPA(coefficients, leagueRates, baselineEP = null, 
     denominator:      'FGA-based (scoring identity: ppp = FGA_p100 × (2·eFG + ft_pct·ftr))',
     avgFGAp100:       fgaP100,
     unit:             'points of net efficiency per 100 possessions, per event',
-    tovAssumption:    'tov_o scale in Barttorvik is non-standard; β_TOV used directly (per-100-poss)',
+    tovAssumption:    'tov_o and orb columns in Barttorvik have non-textbook encoding direction; aggregate event EPA negates β_TOV and β_ORB for display so labels match natural-language interpretation (turnover negative, rebound positive)',
     orbCreditRate:    ORB_POSSESSION_CREDIT,
     stateModel:       baselineEP ? 'Base + Delta (baseline_epa.json + regression coefficient)' : 'regression-only (no baseline loaded)',
     uncertaintyNote:  'Constrained model zeros ambiguous coefficients; see EPA_MODELS.md for field encoding details',
