@@ -42,7 +42,11 @@ const EVENT_ROWS_FULL = [
   { key: 'defShotSuppression', label: 'Shot Suppression (def)' },
 ]
 
-const EVENT_ROWS_T1 = EVENT_ROWS_FULL.filter(r => r.key !== 'offTurnover' && r.key !== 'offRebound')
+// "Essentially zero" threshold for hiding constrained-to-zero rows. NNLS clips
+// wrong-signed coefficients to exactly 0; small numeric noise can leave a
+// trailing 0.0001 on something that was intended to be zero, so the cutoff
+// is slightly above floating-point dust.
+const EPA_ZERO_EPS = 1e-3
 
 // Sign-direction column reliability after the Phase-0 encoding audit.
 // `uncertain` here flags MAGNITUDE noise at n=32, not sign ambiguity — the
@@ -59,9 +63,14 @@ const COEFF_META = [
   { key: 'def_FTR', label: 'Def FTR',   note: 'opponent free throw rate',                            uncertain: false },
 ]
 
-function EventEPATable({ epa, full = false }) {
+function EventEPATable({ epa }) {
   if (!epa) return <div style={{ color: T.textMin, fontSize: 12 }}>No EPA values</div>
-  const rows = full ? EVENT_ROWS_FULL : EVENT_ROWS_T1
+  // Filter out events whose EPA value is essentially zero — those represent
+  // factors NNLS clipped because the unconstrained sign was wrong at n=32, so
+  // their event-level value carries no signal. Showing them as "0
+  // (constrained)" rows added clutter without information.
+  const visible = EVENT_ROWS_FULL.filter(({ key }) => Math.abs(epa[key] ?? 0) >= EPA_ZERO_EPS)
+  const hiddenCount = EVENT_ROWS_FULL.length - visible.length
   return (
     <div>
     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -72,7 +81,7 @@ function EventEPATable({ epa, full = false }) {
         </tr>
       </thead>
       <tbody>
-        {rows.map(({ key, label }) => (
+        {visible.map(({ key, label }) => (
           <tr key={key} style={{ borderBottom: `1px solid ${T.border}20` }}>
             <td style={{ padding: '7px 0', color: T.textMd }}>{label}</td>
             <td style={{ padding: '7px 0', textAlign: 'right' }}>
@@ -83,7 +92,8 @@ function EventEPATable({ epa, full = false }) {
       </tbody>
     </table>
     <div style={{ fontSize: 10, color: T.textMin, marginTop: 8 }}>
-      EPA from sign-constrained model (NNLS). TOV and ORB effects omitted — unreliable at n=32 due to collinearity with eFG%. Tier 2 would refine these once real per-game box scores replace the synthetic placeholder data.
+      EPA from sign-constrained model (NNLS).
+      {hiddenCount > 0 && ` ${hiddenCount} event${hiddenCount > 1 ? 's' : ''} hidden — coefficient clipped to zero by the constraint at n=32.`}
     </div>
     </div>
   )
@@ -324,7 +334,7 @@ function useSyntheticOverride() {
   return [show, toggle]
 }
 
-function TierCard({ badge, description, tier, result, activeComparison, observations, synthetic, epaOverride, statesOverride, fullEvents = false }) {
+function TierCard({ badge, description, tier, result, activeComparison, observations, synthetic, epaOverride, statesOverride }) {
   const [showSynthetic, toggleSynthetic] = useSyntheticOverride()
 
   if (!result) return (
@@ -384,7 +394,7 @@ function TierCard({ badge, description, tier, result, activeComparison, observat
         </div>
       ) : (
         <>
-          {activeComparison === 'events'       && <EventEPATable  epa={epaOverride ?? r.eventEPA} full={fullEvents} />}
+          {activeComparison === 'events'       && <EventEPATable  epa={epaOverride ?? r.eventEPA} />}
           {activeComparison === 'coefficients' && <CoeffTable     coefficients={r.coefficients} />}
           {activeComparison === 'scatter'      && <ScatterViz     observations={r.observations ?? observations} r2={r.r2} n={r.n} label={r.label} />}
           {activeComparison === 'state'        && <StateEPAPanel  states={statesOverride ?? r.states} deltaNote={(statesOverride ?? r.states)?._deltaNote} />}
@@ -470,29 +480,17 @@ export default function EpaLab() {
           ? <div style={{ background: T.redBg, color: T.red, borderRadius: 8, padding: '12px 16px', marginBottom: 20 }}>
               {pipeline.messages?.join(' · ')}
             </div>
-          : <>
-              <DiagnosticsPanel
-                diagnostics={pipeline.diagnostics}
-                messages={pipeline.messages}
-                selectionReason={pipeline.selectionReason}
-                models={pipeline.models}
-                selectedModelKey={sel}
-                viewModelKey={viewModelKey}
-                onSelectModel={setViewModelKey}
-              />
-
-              <TierCard
-                badge="TIER 1"
-                description={`Season aggregates · n=${pipeline.n ?? '—'} · Barttorvik · 2022–25. Coefficients and scatter show the ${effectiveKey?.replace(/_/g, ' ') ?? '—'} model. Event EPA always from sign-constrained model.`}
-                tier="Team-season"
-                result={effectiveModel}
-                activeComparison={activeComparison}
-                observations={pipeline.observations}
-                synthetic={false}
-                epaOverride={pipeline.selectedEventEPA}
-                statesOverride={pipeline.selectedStates}
-              />
-            </>
+          : <TierCard
+              badge="TIER 1"
+              description={`Season aggregates · n=${pipeline.n ?? '—'} · Barttorvik · 2022–25. Coefficients and scatter show the ${effectiveKey?.replace(/_/g, ' ') ?? '—'} model. Event EPA always from sign-constrained model.`}
+              tier="Team-season"
+              result={effectiveModel}
+              activeComparison={activeComparison}
+              observations={pipeline.observations}
+              synthetic={false}
+              epaOverride={pipeline.selectedEventEPA}
+              statesOverride={pipeline.selectedStates}
+            />
         }
 
         <TierCard
@@ -502,7 +500,6 @@ export default function EpaLab() {
           result={tier2}
           activeComparison={activeComparison}
           synthetic={tier2?.synthetic}
-          fullEvents
         />
 
         <PageConclusions prominent conclusions={[
@@ -511,6 +508,18 @@ export default function EpaLab() {
           { label: 'Model selection logic', color: T.blue, text: 'Four models are fit: OLS, Ridge joint, Ridge split (offense/defense separate), and Constrained OLS (NNLS with theory-correct sign constraints). The pipeline auto-selects by LOO-CV R² and sign validity. EPA event values always come from the constrained model to ensure correct sign direction.' },
           { label: 'Tier 1 vs Tier 2 (when populated)', color: T.green, text: 'Tier 1 uses season-aggregate four-factor data (Barttorvik, 2022–25). Tier 2 is intended for per-game box scores from the ESPN API for the same 8 schools and seasons. Real Tier 2 data would have ~28× more observations, better isolate game-level variance, and stabilise TOV/ORB estimates. Today\'s Tier 2 panel is fed by synthetic data and its numbers are suppressed by default.' },
         ]} />
+
+        {pipeline.status !== 'error' && (
+          <DiagnosticsPanel
+            diagnostics={pipeline.diagnostics}
+            messages={pipeline.messages}
+            selectionReason={pipeline.selectionReason}
+            models={pipeline.models}
+            selectedModelKey={sel}
+            viewModelKey={viewModelKey}
+            onSelectModel={setViewModelKey}
+          />
+        )}
 
         <MethodologyPanel
           howItWorks="The EPA pipeline fits ridge regression (with cross-validated regularization) to predict net efficiency from the four Dean Oliver factors. Coefficients are then scaled to per-event units using a league-average FGA/100 denominator derived from the scoring identity: PPP = FGA_p100 × (2·eFG + FT%·FTR)."
