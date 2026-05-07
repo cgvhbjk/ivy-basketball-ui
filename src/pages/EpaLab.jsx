@@ -510,15 +510,17 @@ export default function EpaLab() {
         ]} />
 
         {pipeline.status !== 'error' && (
-          <DiagnosticsPanel
-            diagnostics={pipeline.diagnostics}
-            messages={pipeline.messages}
-            selectionReason={pipeline.selectionReason}
-            models={pipeline.models}
-            selectedModelKey={sel}
-            viewModelKey={viewModelKey}
-            onSelectModel={setViewModelKey}
-          />
+          <div style={{ marginTop: 28 }}>
+            <DiagnosticsPanel
+              diagnostics={pipeline.diagnostics}
+              messages={pipeline.messages}
+              selectionReason={pipeline.selectionReason}
+              models={pipeline.models}
+              selectedModelKey={sel}
+              viewModelKey={viewModelKey}
+              onSelectModel={setViewModelKey}
+            />
+          </div>
         )}
 
         <MethodologyPanel
